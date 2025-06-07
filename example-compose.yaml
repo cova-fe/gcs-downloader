@@ -1,0 +1,49 @@
+# Docker-compose example. I use the downloader to grab documents for paperless, hence the names.
+
+  paperless-dl:
+    # Replace with the full path to your image in Artifact Registry.
+    # Example: europe-west1-docker.pkg.dev/your-gcp-project-id/docker-images/gcs-downloader:v1.0.0
+    image: europe-west1-docker.pkg.dev/your-gcp-project-id/docker-images/gcs-downloader:0.0.7
+
+    container_name: paperless-dl # A friendly name for your container
+
+    command:
+      - "--dest=/app/downloads"
+      - "--bucket=example-paperless-bucket"
+      - "--verbose"
+
+    environment:
+      - GOOGLE_APPLICATION_CREDENTIALS=/etc/gcloud-sa-keys/creds.json
+
+    # Volumes mapping:
+    # This is the most important part for your requirement.
+    # The format is: "HOST_PATH:CONTAINER_PATH:MODE"
+    #
+    # - HOST_PATH: This is the absolute path on your Synology device.
+    #              Synology typically uses /volume1, /volume2, etc., for shared folders.
+    #              A common place for Docker related mounts is within a 'docker' shared folder.
+    #              Example: /volume1/docker/gcs-downloads
+    #
+    # - CONTAINER_PATH: This is the absolute path *inside* your Docker container
+    #                   where your application expects to write the downloaded files.
+    #                   You must configure your Go application to save files to this path.
+    #                   Example: /app/downloads (if your Go app writes to /app/downloads inside the container)
+    #
+    # - MODE: 'rw' for read-write (which you need for saving files).
+    volumes:
+      - /volume1/paperless:/app/downloads:rw
+      # ^^^ REMEMBER TO ADJUST THESE PATHS ^^^
+      #  - Left side: Path on your Synology NAS (e.g., a subfolder in your 'docker' shared folder)
+      #  - Right side: Path inside the container where your app saves files (e.g., /app/downloads)
+      - /volume2/paperless/SA:/etc/gcloud-sa-keys:ro
+
+    # Restart policy:
+    # Ensures the container restarts automatically if it crashes or the Synology reboots.
+    # - "no": Do not automatically restart.
+    # - "on-failure": Restart only if the container exits with a non-zero exit code.
+    # - "always": Always restart the container (even if it exits cleanly).
+    # - "unless-stopped": Always restart unless explicitly stopped.
+    restart: unless-stopped
+    networks:
+    - paperless
+
