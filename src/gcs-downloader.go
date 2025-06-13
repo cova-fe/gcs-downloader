@@ -12,20 +12,21 @@ import (
 	"syscall"
 	"time"
 
+	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
 	"google.golang.org/api/impersonate"
-	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
 
 // Global variables for command-line parameters
 var (
 	downloadFolder            string
-	bucketName                string
+	bucketName                string // This is still used for GCS client initialization if needed for processing
 	projectID                 string
 	impersonateServiceAccount string
 	isVerbose                 bool
-	pollingInterval           time.Duration // New: For polling frequency
+	pubsubTopicName           string // New: Pub/Sub topic name
+	pubsubSubscriptionName    string // New: Pub/Sub subscription name
 )
 
 // Versioning and Build Information (These will be set by the linker at build time)
@@ -49,18 +50,18 @@ func logf(format string, v ...interface{}) {
 }
 
 // Helper function to process a single GCS object (download and delete)
-func processGCSObject(ctx context.Context, client *storage.Client, objAttrs *storage.ObjectAttrs, downloadFolder string, bucketName string) error {
-	objectName := objAttrs.Name
+// Now takes bucketName and objectName as parameters directly from the Pub/Sub message
+func processGCSObject(ctx context.Context, client *storage.Client, bucketName string, objectName string, downloadFolder string) error {
 	downloadPath := filepath.Join(downloadFolder, objectName)
 
 	if isVerbose {
-		logf("Verbose: Attempting to process object: %s", objectName)
+		logf("Verbose: Attempting to process object: %s from bucket %s", objectName, bucketName)
 	}
 
 	// 1. Download the file
 	rc, err := client.Bucket(bucketName).Object(objectName).NewReader(ctx)
 	if err != nil {
-		return fmt.Errorf("error creating reader for object %s: %w", objectName, err)
+		return fmt.Errorf("error creating reader for object %s in bucket %s: %w", objectName, bucketName, err)
 	}
 	defer rc.Close()
 
@@ -74,11 +75,11 @@ func processGCSObject(ctx context.Context, client *storage.Client, objAttrs *sto
 		return fmt.Errorf("error downloading object %s to %s: %w", objectName, downloadPath, err)
 	}
 
-	logf("Successfully downloaded %s to %s", objectName, downloadPath)
+	logf("Successfully downloaded %s from bucket %s to %s", objectName, bucketName, downloadPath)
 
 	// 2. Delete the file from the bucket
 	if err := client.Bucket(bucketName).Object(objectName).Delete(ctx); err != nil {
-		logf("Warning: Error deleting object %s from bucket: %v", objectName, err)
+		logf("Warning: Error deleting object %s from bucket %s: %v", objectName, bucketName, err)
 	} else {
 		logf("Successfully deleted object %s from bucket %s", objectName, bucketName)
 	}
@@ -87,11 +88,12 @@ func processGCSObject(ctx context.Context, client *storage.Client, objAttrs *sto
 
 func main() {
 	flag.StringVar(&downloadFolder, "dest", "", "Path to the folder where files will be downloaded (e.g., /app/downloads)")
-	flag.StringVar(&bucketName, "bucket", "", "Name of the Google Cloud Storage bucket (e.g., my-unique-bucket)")
-	flag.StringVar(&projectID, "project", "", "Optional: Your Google Cloud Project ID. If not provided, it will be inferred from credentials.")
+	flag.StringVar(&bucketName, "bucket", "", "Optional: Name of the Google Cloud Storage bucket. This is only used for GCS client initialization if --impersonate-sa is used. Pub/Sub messages will provide the actual bucket name.")
+	flag.StringVar(&projectID, "project", "", "Your Google Cloud Project ID. Required for Pub/Sub client.")
 	flag.StringVar(&impersonateServiceAccount, "impersonate-sa", "", "Optional: Email of the service account to impersonate (e.g., file-downloader-sa@your-project-id.iam.gserviceaccount.com)")
 	flag.BoolVar(&isVerbose, "verbose", false, "Enable verbose logging.")
-	flag.DurationVar(&pollingInterval, "interval", 30*time.Second, "Polling interval for checking the GCS bucket (e.g., 30s, 1m, 5m).")
+	flag.StringVar(&pubsubTopicName, "pubsub-topic", "", "Name of the Google Cloud Pub/Sub topic to listen to.")
+	flag.StringVar(&pubsubSubscriptionName, "pubsub-subscription", "", "Name of the Google Cloud Pub/Sub subscription to use.")
 
 	versionFlag := flag.Bool("version", false, "Display version and build information")
 
@@ -108,8 +110,16 @@ func main() {
 		logf("Error: --dest parameter is required. Please specify the destination folder for downloads.")
 		os.Exit(1)
 	}
-	if bucketName == "" {
-		logf("Error: --bucket parameter is required. Please specify the GCP bucket name.")
+	if projectID == "" {
+		logf("Error: --project parameter is required. Please specify your GCP Project ID.")
+		os.Exit(1)
+	}
+	if pubsubTopicName == "" {
+		logf("Error: --pubsub-topic parameter is required. Please specify the Pub/Sub topic name.")
+		os.Exit(1)
+	}
+	if pubsubSubscriptionName == "" {
+		logf("Error: --pubsub-subscription parameter is required. Please specify the Pub/Sub subscription name.")
 		os.Exit(1)
 	}
 
@@ -125,25 +135,22 @@ func main() {
 	}
 
 	logf("Starting GCS file downloader (Version: %s, Built: %s)", version, buildTime)
-	logf("Source GCP bucket: %s", bucketName)
+	logf("Listening to Pub/Sub Topic: %s (Subscription: %s)", pubsubTopicName, pubsubSubscriptionName)
 	logf("Destination local folder: %s", downloadFolder)
-	if projectID != "" {
-		logf("GCP Project ID: %s", projectID)
-	}
+	logf("GCP Project ID: %s", projectID)
 	if impersonateServiceAccount != "" {
 		logf("Impersonating Service Account: %s", impersonateServiceAccount)
 	}
-	logf("Polling interval: %s", pollingInterval)
 	if isVerbose {
 		logf("Verbose logging is ENABLED.")
 	} else {
 		logf("Verbose logging is DISABLED.")
 	}
 
-	runPollingLoop()
+	runPubSubListener()
 }
 
-func runPollingLoop() {
+func runPubSubListener() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -158,79 +165,108 @@ func runPollingLoop() {
 		cancel() // Trigger context cancellation
 	}()
 
-	// Infinite loop for polling
-	for {
-		select {
-		case <-ctx.Done():
-			logf("Context cancelled. Exiting polling loop gracefully.")
-			return
-		case <-time.After(pollingInterval): // Wait for the specified interval
-			logf("Polling bucket '%s' for new files...", bucketName)
-			downloadAndCleanBucket(ctx)
-		}
-	}
-}
-
-func downloadAndCleanBucket(ctx context.Context) {
-	var clientOptions []option.ClientOption
+	// Pub/Sub client options
+	var pubsubClientOptions []option.ClientOption
 	if projectID != "" {
-		clientOptions = append(clientOptions, option.WithQuotaProject(projectID))
+		pubsubClientOptions = append(pubsubClientOptions, option.WithQuotaProject(projectID))
 	}
-
+	// For impersonation, Pub/Sub client can also use the token source
 	if impersonateServiceAccount != "" {
 		impersonationScopes := []string{
-			"https://www.googleapis.com/auth/devstorage.read_only",
-			"https://www.googleapis.com/auth/devstorage.delete_objects",
+			"https://www.googleapis.com/auth/cloud-platform", // Broader scope for Pub/Sub if impersonating
 		}
 		ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
 			TargetPrincipal: impersonateServiceAccount,
 			Scopes:          impersonationScopes,
 		})
 		if err != nil {
-			logf("Failed to create impersonated token source: %v", err)
+			logf("Failed to create impersonated token source for Pub/Sub client: %v", err)
 			return
 		}
-		clientOptions = append(clientOptions, option.WithTokenSource(ts))
+		pubsubClientOptions = append(pubsubClientOptions, option.WithTokenSource(ts))
 	}
 
-	client, err := storage.NewClient(ctx, clientOptions...)
+	// 1. Create a Pub/Sub client
+	pubsubClient, err := pubsub.NewClient(ctx, projectID, pubsubClientOptions...)
 	if err != nil {
-		logf("Error creating Google Cloud Storage client: %v", err)
+		logf("Error creating Pub/Sub client: %v", err)
 		return
 	}
-	defer client.Close()
+	defer pubsubClient.Close()
 
-	it := client.Bucket(bucketName).Objects(ctx, nil)
-	foundFilesThisPoll := false // Flag to track if any files were found and processed
+	// 2. Get a reference to the subscription
+	sub := pubsubClient.Subscription(pubsubSubscriptionName)
 
-	for {
-		select {
-		case <-ctx.Done():
-			logf("Context cancelled during bucket iteration. Stopping download phase.")
+	logf("Waiting for messages from subscription '%s'...", pubsubSubscriptionName)
+
+	// 3. Receive messages
+	err = sub.Receive(ctx, func(ctx context.Context, msg *pubsub.Message) {
+		logf("Received message (ID: %s, Attributes: %v)", msg.ID, msg.Attributes)
+
+		// Check for the "objectId" attribute from GCS notification
+		objectName, ok := msg.Attributes["objectId"]
+		if !ok {
+			logf("Error: 'objectId' attribute not found in Pub/Sub message. Skipping processing of message ID: %s", msg.ID)
+			msg.Ack() // Acknowledge the message to prevent redelivery
 			return
-		default:
 		}
 
-		objAttrs, err := it.Next()
-		if err == iterator.Done {
-			break
+		// Check for the "bucketId" attribute from GCS notification
+		// Note: The bucketName flag is just for initial client setup. The actual bucket will come from the message.
+		actualBucketName, ok := msg.Attributes["bucketId"]
+		if !ok {
+			logf("Error: 'bucketId' attribute not found in Pub/Sub message for object '%s'. Skipping processing of message ID: %s", objectName, msg.ID)
+			msg.Ack() // Acknowledge the message to prevent redelivery
+			return
 		}
+
+		// GCS client options
+		var storageClientOptions []option.ClientOption
+		if projectID != "" {
+			storageClientOptions = append(storageClientOptions, option.WithQuotaProject(projectID))
+		}
+		if impersonateServiceAccount != "" {
+			impersonationScopes := []string{
+				"https://www.googleapis.com/auth/devstorage.read_only",
+				"https://www.googleapis.com/auth/devstorage.delete_objects",
+			}
+			ts, err := impersonate.CredentialsTokenSource(ctx, impersonate.CredentialsConfig{
+				TargetPrincipal: impersonateServiceAccount,
+				Scopes:          impersonationScopes,
+			})
+			if err != nil {
+				logf("Failed to create impersonated token source for Storage client for object '%s': %v. Not processing.", objectName, err)
+				msg.Ack()
+				return
+			}
+			storageClientOptions = append(storageClientOptions, option.WithTokenSource(ts))
+		}
+
+		// Create a storage client for each message (could optimize by reusing if no impersonation)
+		storageClient, err := storage.NewClient(ctx, storageClientOptions...)
 		if err != nil {
-			logf("Error iterating bucket objects: %v", err)
+			logf("Error creating Google Cloud Storage client for object '%s': %v. Not processing.", objectName, err)
+			msg.Ack() // Acknowledge the message even on client creation error
+			return
+		}
+		defer storageClient.Close()
+
+		// Process the GCS object (download and delete)
+		if err := processGCSObject(ctx, storageClient, actualBucketName, objectName, downloadFolder); err != nil {
+			logf("Failed to process object '%s' from bucket '%s': %v", objectName, actualBucketName, err)
+			// You might want to Nack the message here instead of Ack if you want it redelivered
+			// for retry, but acknowledge for now to prevent infinite loops on persistent errors.
+			msg.Ack() // Acknowledge to prevent redelivery if the error is non-transient
 			return
 		}
 
-		foundFilesThisPoll = true
-		if err := processGCSObject(ctx, client, objAttrs, downloadFolder, bucketName); err != nil {
-			logf("Failed to process object '%s': %v", objAttrs.Name, err)
-			continue
-		}
-	}
+		msg.Ack() // Acknowledge the message to prevent redelivery after successful processing
+	})
 
-	if !foundFilesThisPoll {
-		logf("No new files found in the GCS bucket during this poll interval.")
-	} else {
-		logf("Finished processing files for this poll interval.")
+	if err != nil && err != context.Canceled { // Don't log context cancellation as an error
+		logf("Error receiving messages from Pub/Sub: %v", err)
+	} else if err == context.Canceled {
+		logf("Pub/Sub listener stopped due to context cancellation.")
 	}
 }
 
