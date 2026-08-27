@@ -1,0 +1,42 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+      - id: detect-private-key
+
+  - repo: local
+    hooks:
+      - id: trivy-secrets
+        name: trivy-secret-scan
+        description: Scans repository for leaked secrets using Trivy
+        entry: /bin/sh -c 'if command -v trivy >/dev/null 2>&1; then trivy fs --scanners secret --exit-code 1 .; else echo "Trivy not installed, skipping..."; fi'
+        language: system
+        pass_filenames: false
+
+      - id: go-fmt
+        name: go-fmt
+        description: Runs gofmt on Go source code
+        entry: /bin/sh -c 'cd src && UNFORMATTED=$(gofmt -l .) && if [ -n "$UNFORMATTED" ]; then echo "Unformatted files:"; echo "$UNFORMATTED"; exit 1; fi'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-vet
+        name: go-vet
+        description: Runs go vet on Go source code
+        entry: bash -c "cd src && go vet ./..."
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-test
+        name: go-test
+        description: Runs go test on Go source code
+        entry: bash -c "cd src && go test ./..."
+        language: system
+        types: [go]
+        pass_filenames: false

@@ -15,20 +15,31 @@ To say it in another words: I run the code on mi machine and it more or less wor
 
 You have targets in the Makefile:
 1. `make test`: Run unit tests.
-2. `make check`: Run formatting checks (`gofmt`), static analysis (`go vet`), and unit tests.
-3. `make fmt`: Auto-format all Go source files.
-4. `make install-hooks`: Install the Git pre-commit hook into `.git/hooks/pre-commit`.
-5. `make build`: Build the binary for the current architecture.
-6. `make build-macos-arm`: Build for macOS ARM (darwin/arm64).
-7. `make build-linux-amd64`: Build for Linux AMD64 (linux/amd64).
+2. `make secret-scan`: Scan the repository for leaked secrets using Trivy.
+3. `make check`: Run formatting checks (`gofmt`), secret leak scanning (`trivy`), static analysis (`go vet`), and unit tests.
+4. `make fmt`: Auto-format all Go source files.
+5. `make install-hooks`: Install the Git pre-commit hook (supports Python `pre-commit` framework or native git hook).
+6. `make build`: Build the binary for the current architecture.
+7. `make build-macos-arm`: Build for macOS ARM (darwin/arm64).
+8. `make build-linux-amd64`: Build for Linux AMD64 (linux/amd64).
 
-### Pre-commit Hook
+### Pre-commit Hook & Secret Leak Prevention
 
-To ensure tests and code formatting are always verified before committing:
+To ensure tests, formatting, and secret leak scanning run automatically before committing:
 ```bash
 make install-hooks
 ```
-The pre-commit hook automatically runs `gofmt`, `go vet`, and `go test` before any commit is finalized.
+Or if you use the `pre-commit` tool:
+```bash
+pre-commit install
+pre-commit run -a
+```
+The pre-commit configuration checks:
+- Leaked credentials, API keys, and secrets (via `trivy` and `detect-private-key`)
+- Go code formatting (`gofmt`)
+- Go static analysis (`go vet`)
+- Unit tests (`go test`)
+- File formatting (trailing whitespace, YAML syntax, end-of-file fixers)
 
 ### Docker
 

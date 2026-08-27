@@ -50,4 +50,3 @@
     restart: unless-stopped
     networks:
     - paperless
-

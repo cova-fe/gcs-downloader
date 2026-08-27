@@ -3,5 +3,3 @@ src/downloader
 src/gcs-downloader
 src/gcs-downloader-macos-arm64
 src/gcs-downloader-linux-amd64
-
-

@@ -1,11 +1,20 @@
 #!/bin/sh
-# Git pre-commit hook to verify formatting, vet, and run tests
+# Git pre-commit hook to verify formatting, vet, secret leaks, and run tests
 
 set -e
 
 echo "Running pre-commit checks..."
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT"
+
+echo "==> Checking for leaked secrets with Trivy..."
+if command -v trivy >/dev/null 2>&1; then
+    trivy fs --scanners secret --exit-code 1 .
+else
+    echo "Warning: Trivy not found. Skipping secret scan."
+fi
+
 cd "$REPO_ROOT/src"
 
 echo "==> Checking Go formatting..."
