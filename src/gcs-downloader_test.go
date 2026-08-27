@@ -174,10 +174,10 @@ func createMinimalExifJPEG(dateStr string) []byte {
 	valOffset := uint32(8 + 2 + 12 + 4)
 	valBytes := append([]byte(dateStr), 0x00)
 
-	binary.Write(&tiffBuf, binary.LittleEndian, uint16(0x0132))      // Tag DateTime
-	binary.Write(&tiffBuf, binary.LittleEndian, uint16(2))           // Type ASCII
+	binary.Write(&tiffBuf, binary.LittleEndian, uint16(0x0132))        // Tag DateTime
+	binary.Write(&tiffBuf, binary.LittleEndian, uint16(2))             // Type ASCII
 	binary.Write(&tiffBuf, binary.LittleEndian, uint32(len(valBytes))) // Count
-	binary.Write(&tiffBuf, binary.LittleEndian, valOffset)          // Value offset
+	binary.Write(&tiffBuf, binary.LittleEndian, valOffset)             // Value offset
 
 	// Next IFD offset: 0
 	binary.Write(&tiffBuf, binary.LittleEndian, uint32(0))

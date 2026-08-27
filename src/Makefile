@@ -36,6 +36,39 @@ build-linux-amd64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o $(APP_NAME)-linux-amd64 -ldflags '$(LDFLAGS)' $(GO_SOURCE)
 	@echo "Build complete: $(APP_NAME)-linux-amd64"
 
+# Run tests
+.PHONY: test
+test:
+	@echo "Running tests..."
+	go test -v ./...
+
+# Run go vet
+.PHONY: vet
+vet:
+	@echo "Running go vet..."
+	go vet ./...
+
+# Check go format
+.PHONY: fmt-check
+fmt-check:
+	@echo "Checking formatting..."
+	@if [ -n "$$(gofmt -l .)" ]; then \
+		echo "The following files are not formatted properly:"; \
+		gofmt -l .; \
+		exit 1; \
+	fi
+	@echo "Formatting OK"
+
+# Format all Go source files
+.PHONY: fmt
+fmt:
+	@echo "Formatting Go files..."
+	gofmt -w .
+
+# Run all checks (format, vet, test)
+.PHONY: check
+check: fmt-check vet test
+
 # Clean up build artifacts
 .PHONY: clean
 clean:
@@ -48,6 +81,9 @@ clean:
 help:
 	@echo "Usage:"
 	@echo "  make                 - Build for the current OS/ARCH"
+	@echo "  make test            - Run unit tests"
+	@echo "  make check           - Run formatting check, vet, and tests"
+	@echo "  make fmt             - Format Go files with gofmt"
 	@echo "  make build-macos-arm - Build for macOS ARM (darwin/arm64)"
 	@echo "  make build-linux-amd64 - Build for Linux AMD64 (linux/amd64)"
 	@echo "  make clean           - Remove build artifacts"

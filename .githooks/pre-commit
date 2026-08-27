@@ -1,0 +1,26 @@
+#!/bin/sh
+# Git pre-commit hook to verify formatting, vet, and run tests
+
+set -e
+
+echo "Running pre-commit checks..."
+
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT/src"
+
+echo "==> Checking Go formatting..."
+UNFORMATTED=$(gofmt -l .)
+if [ -n "$UNFORMATTED" ]; then
+    echo "ERROR: The following files need formatting with gofmt:"
+    echo "$UNFORMATTED"
+    echo "Run 'make fmt' or 'gofmt -w .' to fix."
+    exit 1
+fi
+
+echo "==> Running go vet..."
+go vet ./...
+
+echo "==> Running unit tests..."
+go test -v ./...
+
+echo "All pre-commit checks passed!"

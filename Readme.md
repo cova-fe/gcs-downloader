@@ -11,12 +11,24 @@ To say it in another words: I run the code on mi machine and it more or less wor
 ## Installation
 
 
-### Build
+### Build & Test
 
-You have some targets in makefile: 
-1. build-macos-arm: As I use a macos for testing, this is useful for a local quick build
-2. build-linux-amd64: To create the binary for linux, good for docker images
-3. build: just pick the current architecture.
+You have targets in the Makefile:
+1. `make test`: Run unit tests.
+2. `make check`: Run formatting checks (`gofmt`), static analysis (`go vet`), and unit tests.
+3. `make fmt`: Auto-format all Go source files.
+4. `make install-hooks`: Install the Git pre-commit hook into `.git/hooks/pre-commit`.
+5. `make build`: Build the binary for the current architecture.
+6. `make build-macos-arm`: Build for macOS ARM (darwin/arm64).
+7. `make build-linux-amd64`: Build for Linux AMD64 (linux/amd64).
+
+### Pre-commit Hook
+
+To ensure tests and code formatting are always verified before committing:
+```bash
+make install-hooks
+```
+The pre-commit hook automatically runs `gofmt`, `go vet`, and `go test` before any commit is finalized.
 
 ### Docker
 
