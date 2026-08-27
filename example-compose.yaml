@@ -9,7 +9,10 @@
 
     command:
       - "--dest=/app/downloads"
-      - "--bucket=example-paperless-bucket"
+      - "--image-dest=/app/images" # Optional: images sorted into year subdirectories
+      - "--project=your-gcp-project-id"
+      - "--pubsub-topic=your-gcs-topic"
+      - "--pubsub-subscription=your-gcs-subscription"
       - "--verbose"
 
     environment:
@@ -32,6 +35,7 @@
     # - MODE: 'rw' for read-write (which you need for saving files).
     volumes:
       - /volume1/paperless:/app/downloads:rw
+      - /volume1/photos:/app/images:rw # Mount for images sorted by year
       # ^^^ REMEMBER TO ADJUST THESE PATHS ^^^
       #  - Left side: Path on your Synology NAS (e.g., a subfolder in your 'docker' shared folder)
       #  - Right side: Path inside the container where your app saves files (e.g., /app/downloads)

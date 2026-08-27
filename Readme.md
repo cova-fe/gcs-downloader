@@ -43,17 +43,33 @@ This tool relies on the Google Cloud client library for Go, which supports vario
 
 #### Available Flags:
 
---dest <path>: (Required) The path to the local folder.
+--dest <path>: (Required) The path to the local folder for downloaded files (e.g., PDFs and general documents).
 
---bucket <name>: (Required) The name of the GCS bucket.
+--image-dest <path>: (Optional) The path to the local folder for downloaded images. Images will be automatically placed in year-based subdirectories (e.g., `/images/2026/photo.jpg`). If not specified, defaults to the `--dest` folder.
 
---project <id>: (Optional) Your Google Cloud Project ID.
+--pubsub-topic <name>: (Required) Name of the Google Cloud Pub/Sub topic to listen to.
+
+--pubsub-subscription <name>: (Required) Name of the Google Cloud Pub/Sub subscription to use.
+
+--project <id>: (Required) Your Google Cloud Project ID.
+
+--bucket <name>: (Optional) Name of the GCS bucket (used if needed for client setup; actual bucket is taken from Pub/Sub notifications).
 
 --impersonate-sa <email>: (Optional) Email of the service account to impersonate.
 
---verbose <bool>: (Optional) Verbose logging
+--verbose <bool>: (Optional) Verbose logging.
 
---interval:  Polling interval
+--version: (Optional) Display version and build information.
+
+### Image Sorting by Year
+
+When an image is downloaded (e.g. `.jpg`, `.png`, `.webp`, `.heic`, `.tiff`, etc.), the application determines the image's creation year using the following priority:
+1. **EXIF Metadata:** Reads standard EXIF tags (`DateTimeOriginal`, `DateTimeDigitized`, `DateTime`).
+2. **Filename Date Heuristics:** Matches timestamps and dates in filenames (e.g., `IMG_20230514_...jpg`, `Screenshot_2022-05-10.png`).
+3. **GCS Metadata:** Uses the object's `LastModified` timestamp from Google Cloud Storage.
+4. **Fallback:** Defaults to the current year.
+
+The image is then placed into `<image-dest>/<year>/<filename>`. PDF and non-image documents continue to be downloaded directly into `--dest` without any changes.
 
 ### Contributing
 Contributions are welcome! If you find a bug or have a feature request, please open an issue or submit a pull request.
