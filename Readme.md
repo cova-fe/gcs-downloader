@@ -85,7 +85,7 @@ This tool relies on the Google Cloud client library for Go, which supports vario
 
 --dest <path>: (Required) The path to the local folder for downloaded files (e.g., PDFs and general documents).
 
---image-dest <path>: (Optional) The path to the local folder for downloaded images. Images will be automatically placed in year-based subdirectories (e.g., `/images/2026/photo.jpg`). If not specified, defaults to the `--dest` folder.
+--image-dest <path>: (Optional) The path to the local folder for downloaded images and videos. Media files will be automatically placed in year-based subdirectories (e.g., `/images/2026/photo.jpg` or `/images/2023/video.mp4`). If not specified, defaults to the `--dest` folder.
 
 --pubsub-topic <name>: (Required) Name of the Google Cloud Pub/Sub topic to listen to.
 
@@ -101,21 +101,21 @@ This tool relies on the Google Cloud client library for Go, which supports vario
 
 --version: (Optional) Display version and build information.
 
-### Image Sorting by Year
+### Image & Video Sorting by Year
 
-When an image is downloaded (e.g. `.jpg`, `.png`, `.webp`, `.heic`, `.tiff`, etc.), the application determines the image's creation year using the following priority:
+When an image (e.g. `.jpg`, `.png`, `.webp`, `.heic`, `.tiff`, etc.) or video (e.g. `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`, `.m4v`, etc.) is downloaded, the application determines the creation year using the following priority:
 1. **EXIF Metadata:** Reads standard EXIF tags (`DateTimeOriginal`, `DateTimeDigitized`, `DateTime`).
-2. **Filename Date Heuristics:** Matches timestamps and dates in filenames (e.g., `IMG_20230514_...jpg`, `Screenshot_2022-05-10.png`).
+2. **Filename Date Heuristics:** Matches timestamps and dates in filenames (e.g., `IMG_20230514_...jpg`, `VID_20230815_...mp4`, `Screenshot_2022-05-10.png`).
 3. **GCS Metadata:** Uses the object's `LastModified` timestamp from Google Cloud Storage.
 4. **Fallback:** Defaults to the current year.
 
-The image is then placed into `<image-dest>/<year>/<filename>`. PDF and non-image documents continue to be downloaded directly into `--dest` without any changes.
+The file is then placed into `<image-dest>/<year>/<filename>`. PDF and non-media documents continue to be downloaded directly into `--dest` without any changes.
 
-### Duplicate Image Handling
+### Duplicate Media Handling
 
-If an image arrives with a filename that already exists in the destination `<image-dest>/<year>/` folder:
-1. The duplicate image is automatically diverted to a `DUPES` folder at the root of the image directory (`<image-dest>/DUPES/<filename>`).
-2. If a file with that name is already present in the `DUPES` folder, a random 2-character suffix is appended to the filename before the extension (e.g. `photo_a1.jpg`) to prevent overwriting.
+If an image or video arrives with a filename that already exists in the destination `<image-dest>/<year>/` folder:
+1. The duplicate file is automatically diverted to a `DUPES` folder at the root of the media directory (`<image-dest>/DUPES/<filename>`).
+2. If a file with that name is already present in the `DUPES` folder, a random 2-character suffix is appended to the filename before the extension (e.g. `photo_a1.jpg` or `video_k9.mp4`) to prevent overwriting.
 
 ### Contributing
 Contributions are welcome! If you find a bug or have a feature request, please open an issue or submit a pull request.

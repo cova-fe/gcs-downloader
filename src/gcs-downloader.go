@@ -60,6 +60,26 @@ var imageExtensions = map[string]bool{
 	".ico":  true,
 }
 
+// Known video extensions
+var videoExtensions = map[string]bool{
+	".mp4":  true,
+	".mov":  true,
+	".avi":  true,
+	".mkv":  true,
+	".webm": true,
+	".flv":  true,
+	".wmv":  true,
+	".m4v":  true,
+	".3gp":  true,
+	".3g2":  true,
+	".ts":   true,
+	".mts":  true,
+	".m2ts": true,
+	".vob":  true,
+	".ogv":  true,
+	".divx": true,
+}
+
 var (
 	// Regex matching full dates like 20230815, 2023-08-15, 2023_08_15, 2023.08.15
 	dateInFilenameRegex = regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})[-_.]?(0[1-9]|1[0-2])[-_.]?(0[1-9]|[12]\d|3[01])(?:[^0-9]|$)`)
@@ -111,24 +131,55 @@ func isImage(filename string, contentType string) bool {
 	return false
 }
 
-// sniffedIsImage inspects the initial bytes of a file to check if it's an image
-func sniffedIsImage(filePath string) bool {
+// isVideo determines whether the file is a video based on extension or MIME type
+func isVideo(filename string, contentType string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if videoExtensions[ext] {
+		return true
+	}
+	ct := strings.ToLower(contentType)
+	if strings.HasPrefix(ct, "video/") {
+		return true
+	}
+	return false
+}
+
+// isMedia determines whether the file is an image or video
+func isMedia(filename string, contentType string) bool {
+	return isImage(filename, contentType) || isVideo(filename, contentType)
+}
+
+// sniffedIsMedia inspects the initial bytes of a file to check if it's an image or video
+func sniffedIsMedia(filePath string) (bool, bool) {
+	// returns (isMedia, isVideo)
 	f, err := os.Open(filePath)
 	if err != nil {
-		return false
+		return false, false
 	}
 	defer f.Close()
 
 	buf := make([]byte, 512)
 	n, err := f.Read(buf)
 	if err != nil && err != io.EOF {
-		return false
+		return false, false
 	}
 	ct := strings.ToLower(http.DetectContentType(buf[:n]))
-	return strings.HasPrefix(ct, "image/")
+	if strings.HasPrefix(ct, "video/") {
+		return true, true
+	}
+	if strings.HasPrefix(ct, "image/") {
+		return true, false
+	}
+	return false, false
 }
 
-// isValidYear checks if a year string represents a plausible image creation year
+// sniffedIsImage is retained for backwards compatibility
+func sniffedIsImage(filePath string) bool {
+	isMed, isVid := sniffedIsMedia(filePath)
+	return isMed && !isVid
+}
+
+// isValidYear checks if a year string represents a plausible media creation year
 func isValidYear(yearStr string) bool {
 	y, err := strconv.Atoi(yearStr)
 	if err != nil {
@@ -218,8 +269,8 @@ func extractYearFromTimestamps(timestamps ...time.Time) string {
 	return ""
 }
 
-// determineImageYear tries various strategies to identify the year of image creation
-func determineImageYear(filePath string, filename string, timestamps ...time.Time) (string, string) {
+// determineMediaYear tries various strategies to identify the year of image/video creation
+func determineMediaYear(filePath string, filename string, timestamps ...time.Time) (string, string) {
 	if year, err := extractYearFromEXIF(filePath); err == nil && year != "" {
 		return year, "EXIF"
 	}
@@ -230,6 +281,11 @@ func determineImageYear(filePath string, filename string, timestamps ...time.Tim
 		return year, "GCS metadata"
 	}
 	return fmt.Sprintf("%04d", time.Now().Year()), "fallback (current year)"
+}
+
+// determineImageYear is retained for backwards compatibility
+func determineImageYear(filePath string, filename string, timestamps ...time.Time) (string, string) {
+	return determineMediaYear(filePath, filename, timestamps...)
 }
 
 // moveFile moves a file from src to dst, handling cross-device links seamlessly
@@ -274,12 +330,12 @@ func randomString(length int) string {
 	return string(b)
 }
 
-// resolveImageDestinationPath resolves the destination path for an image.
-// If the file already exists in <imageFolder>/<year>/<filename>, it redirects it to <imageFolder>/DUPES/<filename>.
-// If <imageFolder>/DUPES/<filename> already exists, it appends a random 2-character string to the filename.
-func resolveImageDestinationPath(baseImageFolder string, year string, rawFilename string) (string, bool, error) {
+// resolveMediaDestinationPath resolves the destination path for an image or video.
+// If the file already exists in <baseFolder>/<year>/<filename>, it redirects it to <baseFolder>/DUPES/<filename>.
+// If <baseFolder>/DUPES/<filename> already exists, it appends a random 2-character string to the filename.
+func resolveMediaDestinationPath(baseFolder string, year string, rawFilename string) (string, bool, error) {
 	filename := filepath.Base(rawFilename)
-	yearDir := filepath.Join(baseImageFolder, year)
+	yearDir := filepath.Join(baseFolder, year)
 	if err := os.MkdirAll(yearDir, 0755); err != nil {
 		return "", false, fmt.Errorf("error creating year directory %s: %w", yearDir, err)
 	}
@@ -290,7 +346,7 @@ func resolveImageDestinationPath(baseImageFolder string, year string, rawFilenam
 	}
 
 	// File already exists in the year folder; redirect to DUPES folder
-	dupesDir := filepath.Join(baseImageFolder, "DUPES")
+	dupesDir := filepath.Join(baseFolder, "DUPES")
 	if err := os.MkdirAll(dupesDir, 0755); err != nil {
 		return "", false, fmt.Errorf("error creating DUPES directory %s: %w", dupesDir, err)
 	}
@@ -318,38 +374,53 @@ func resolveImageDestinationPath(baseImageFolder string, year string, rawFilenam
 	return filepath.Join(dupesDir, fallbackFilename), true, nil
 }
 
+// resolveImageDestinationPath is retained for backwards compatibility
+func resolveImageDestinationPath(baseImageFolder string, year string, rawFilename string) (string, bool, error) {
+	return resolveMediaDestinationPath(baseImageFolder, year, rawFilename)
+}
+
 // processDownloadedFile determines the target path for a downloaded temp file based on its type and attributes,
 // moves it to the appropriate destination directory, and returns the final path and log description.
 func processDownloadedFile(tempPath string, objectName string, contentType string, gcsLastModified time.Time, downloadFolder string, imageFolder string) (string, string, error) {
 	isPDFFile := isPDF(objectName, contentType)
 	isImageFile := !isPDFFile && isImage(objectName, contentType)
+	isVideoFile := !isPDFFile && !isImageFile && isVideo(objectName, contentType)
 
-	// If not identified as PDF or image yet, check content sniffing
-	if !isPDFFile && !isImageFile {
-		if sniffedIsImage(tempPath) {
-			isImageFile = true
+	// If not identified as PDF, image, or video yet, check content sniffing
+	if !isPDFFile && !isImageFile && !isVideoFile {
+		if isMed, isVid := sniffedIsMedia(tempPath); isMed {
+			if isVid {
+				isVideoFile = true
+			} else {
+				isImageFile = true
+			}
 		}
 	}
 
+	isMediaFile := isImageFile || isVideoFile
 	var finalDestPath string
 	var logDetails string
 
-	if isImageFile {
-		year, source := determineImageYear(tempPath, objectName, gcsLastModified)
+	if isMediaFile {
+		year, source := determineMediaYear(tempPath, objectName, gcsLastModified)
 		targetBase := imageFolder
 		if targetBase == "" {
 			targetBase = downloadFolder
 		}
 		var isDupe bool
 		var err error
-		finalDestPath, isDupe, err = resolveImageDestinationPath(targetBase, year, objectName)
+		finalDestPath, isDupe, err = resolveMediaDestinationPath(targetBase, year, objectName)
 		if err != nil {
 			return "", "", err
 		}
+		mediaType := "image"
+		if isVideoFile {
+			mediaType = "video"
+		}
 		if isDupe {
-			logDetails = fmt.Sprintf("image [DUPLICATE redirected to DUPES] (year: %s from %s)", year, source)
+			logDetails = fmt.Sprintf("%s [DUPLICATE redirected to DUPES] (year: %s from %s)", mediaType, year, source)
 		} else {
-			logDetails = fmt.Sprintf("image (year: %s from %s)", year, source)
+			logDetails = fmt.Sprintf("%s (year: %s from %s)", mediaType, year, source)
 		}
 	} else {
 		finalDestPath = filepath.Join(downloadFolder, objectName)
@@ -390,10 +461,10 @@ func processGCSObject(ctx context.Context, client *storage.Client, bucketName st
 	defer rc.Close()
 
 	isPDFFile := isPDF(objectName, rc.Attrs.ContentType)
-	isImageFile := !isPDFFile && isImage(objectName, rc.Attrs.ContentType)
+	isMediaFile := !isPDFFile && (isImage(objectName, rc.Attrs.ContentType) || isVideo(objectName, rc.Attrs.ContentType))
 
 	baseDir := downloadFolder
-	if isImageFile && imageFolder != "" {
+	if isMediaFile && imageFolder != "" {
 		baseDir = imageFolder
 	}
 
@@ -440,7 +511,7 @@ func processGCSObject(ctx context.Context, client *storage.Client, bucketName st
 
 func main() {
 	flag.StringVar(&downloadFolder, "dest", "", "Path to the folder where files will be downloaded (e.g., /app/downloads)")
-	flag.StringVar(&imageFolder, "image-dest", "", "Optional: Path to the folder where images will be downloaded in year-based subdirectories (e.g., /app/images). If not specified, defaults to --dest.")
+	flag.StringVar(&imageFolder, "image-dest", "", "Optional: Path to the folder where images and videos will be downloaded in year-based subdirectories (e.g., /app/images). If not specified, defaults to --dest.")
 	flag.StringVar(&bucketName, "bucket", "", "Optional: Name of the Google Cloud Storage bucket. This is only used for GCS client initialization if --impersonate-sa is used. Pub/Sub messages will provide the actual bucket name.")
 	flag.StringVar(&projectID, "project", "", "Your Google Cloud Project ID. Required for Pub/Sub client.")
 	flag.StringVar(&impersonateServiceAccount, "impersonate-sa", "", "Optional: Email of the service account to impersonate (e.g., file-downloader-sa@your-project-id.iam.gserviceaccount.com)")
@@ -491,13 +562,13 @@ func main() {
 		imageFolder = downloadFolder
 	} else {
 		if _, err := os.Stat(imageFolder); os.IsNotExist(err) {
-			logf("Image destination folder '%s' does not exist. Creating it...", imageFolder)
+			logf("Image/Video destination folder '%s' does not exist. Creating it...", imageFolder)
 			if err := os.MkdirAll(imageFolder, 0755); err != nil {
-				logf("Error creating image destination folder '%s': %v", imageFolder, err)
+				logf("Error creating image/video destination folder '%s': %v", imageFolder, err)
 				os.Exit(1)
 			}
 		} else if err != nil {
-			logf("Error checking image destination folder '%s': %v", imageFolder, err)
+			logf("Error checking image/video destination folder '%s': %v", imageFolder, err)
 			os.Exit(1)
 		}
 	}
@@ -505,7 +576,7 @@ func main() {
 	logf("Starting GCS file downloader (Version: %s, Built: %s)", version, buildTime)
 	logf("Listening to Pub/Sub Topic: %s (Subscription: %s)", pubsubTopicName, pubsubSubscriptionName)
 	logf("Destination local folder (PDF/documents): %s", downloadFolder)
-	logf("Destination local folder (Images): %s (with year subdirectories)", imageFolder)
+	logf("Destination local folder (Images/Videos): %s (with year subdirectories)", imageFolder)
 	logf("GCP Project ID: %s", projectID)
 	if impersonateServiceAccount != "" {
 		logf("Impersonating Service Account: %s", impersonateServiceAccount)

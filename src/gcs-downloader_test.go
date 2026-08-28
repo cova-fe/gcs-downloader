@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -73,6 +74,50 @@ func TestIsImage(t *testing.T) {
 	}
 }
 
+func TestIsVideo(t *testing.T) {
+	tests := []struct {
+		filename    string
+		contentType string
+		expected    bool
+	}{
+		{"video.mp4", "", true},
+		{"movie.MOV", "", true},
+		{"clip.avi", "", true},
+		{"recording.mkv", "", true},
+		{"stream.webm", "", true},
+		{"old.flv", "", true},
+		{"video.wmv", "", true},
+		{"clip.m4v", "", true},
+		{"mobile.3gp", "", true},
+		{"stream.ts", "", true},
+		{"cam.mts", "", true},
+		{"custom.file", "video/mp4", true},
+		{"custom.file", "VIDEO/QUICKTIME", true},
+		{"photo.jpg", "image/jpeg", false},
+		{"document.pdf", "application/pdf", false},
+		{"notes.txt", "text/plain", false},
+	}
+
+	for _, tt := range tests {
+		result := isVideo(tt.filename, tt.contentType)
+		if result != tt.expected {
+			t.Errorf("isVideo(%q, %q) = %v; expected %v", tt.filename, tt.contentType, result, tt.expected)
+		}
+	}
+}
+
+func TestIsMedia(t *testing.T) {
+	if !isMedia("photo.jpg", "") {
+		t.Errorf("expected photo.jpg to be media")
+	}
+	if !isMedia("video.mp4", "") {
+		t.Errorf("expected video.mp4 to be media")
+	}
+	if isMedia("doc.pdf", "") {
+		t.Errorf("expected doc.pdf not to be media")
+	}
+}
+
 func TestExtractYearFromFilename(t *testing.T) {
 	tests := []struct {
 		filename string
@@ -120,7 +165,7 @@ func TestExtractYearFromTimestamps(t *testing.T) {
 	}
 }
 
-func TestSniffedIsImage(t *testing.T) {
+func TestSniffedIsMedia(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create a plain text file
@@ -128,8 +173,8 @@ func TestSniffedIsImage(t *testing.T) {
 	if err := os.WriteFile(txtFile, []byte("Hello world, this is plain text"), 0644); err != nil {
 		t.Fatalf("failed to write txt file: %v", err)
 	}
-	if sniffedIsImage(txtFile) {
-		t.Errorf("expected text file not to be detected as image")
+	if isMed, _ := sniffedIsMedia(txtFile); isMed {
+		t.Errorf("expected text file not to be detected as media")
 	}
 
 	// Create a minimal valid PNG
@@ -149,8 +194,12 @@ func TestSniffedIsImage(t *testing.T) {
 	if err := os.WriteFile(pngFile, pngBytes, 0644); err != nil {
 		t.Fatalf("failed to write png file: %v", err)
 	}
+	isMed, isVid := sniffedIsMedia(pngFile)
+	if !isMed || isVid {
+		t.Errorf("expected png file to be detected as image (not video)")
+	}
 	if !sniffedIsImage(pngFile) {
-		t.Errorf("expected png file to be detected as image")
+		t.Errorf("expected sniffedIsImage to return true for png")
 	}
 }
 
@@ -373,7 +422,27 @@ func TestProcessDownloadedFile(t *testing.T) {
 		t.Errorf("Image not found at expected location %q", expectedImg2Path)
 	}
 
-	// 4. Non-image, non-PDF file -> goes to downloadDir directly
+	// 4. Video file -> goes to imageDir/<year>/<filename>
+	vidTemp := filepath.Join(tmpBase, "temp_vid.tmp")
+	if err := os.WriteFile(vidTemp, []byte("fake video stream data"), 0644); err != nil {
+		t.Fatalf("failed to write temp video: %v", err)
+	}
+	destPath, logDetails, err = processDownloadedFile(vidTemp, "VID_20230704_120000.mp4", "video/mp4", time.Time{}, downloadDir, imageDir)
+	if err != nil {
+		t.Fatalf("processDownloadedFile failed for Video: %v", err)
+	}
+	expectedVidPath := filepath.Join(imageDir, "2023", "VID_20230704_120000.mp4")
+	if destPath != expectedVidPath {
+		t.Errorf("Video destPath = %q; expected %q", destPath, expectedVidPath)
+	}
+	if _, err := os.Stat(expectedVidPath); os.IsNotExist(err) {
+		t.Errorf("Video not found at expected location %q", expectedVidPath)
+	}
+	if !strings.HasPrefix(logDetails, "video") {
+		t.Errorf("expected logDetails starting with 'video', got %q", logDetails)
+	}
+
+	// 5. Non-image, non-video, non-PDF file -> goes to downloadDir directly
 	txtTemp := filepath.Join(tmpBase, "temp_txt.tmp")
 	if err := os.WriteFile(txtTemp, []byte("just a text file"), 0644); err != nil {
 		t.Fatalf("failed to write temp txt: %v", err)
