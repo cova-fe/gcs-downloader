@@ -111,6 +111,12 @@ When an image is downloaded (e.g. `.jpg`, `.png`, `.webp`, `.heic`, `.tiff`, etc
 
 The image is then placed into `<image-dest>/<year>/<filename>`. PDF and non-image documents continue to be downloaded directly into `--dest` without any changes.
 
+### Duplicate Image Handling
+
+If an image arrives with a filename that already exists in the destination `<image-dest>/<year>/` folder:
+1. The duplicate image is automatically diverted to a `DUPES` folder at the root of the image directory (`<image-dest>/DUPES/<filename>`).
+2. If a file with that name is already present in the `DUPES` folder, a random 2-character suffix is appended to the filename before the extension (e.g. `photo_a1.jpg`) to prevent overwriting.
+
 ### Contributing
 Contributions are welcome! If you find a bug or have a feature request, please open an issue or submit a pull request.
 

@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log"
+	"math/big"
 	"net/http"
 	"os"
 	"os/signal"
@@ -256,6 +258,66 @@ func moveFile(src, dst string) error {
 	return os.Remove(src)
 }
 
+const randomCharset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// randomString generates a cryptographically secure random alphanumeric string of length n
+func randomString(length int) string {
+	b := make([]byte, length)
+	for i := range b {
+		n, err := rand.Int(rand.Reader, big.NewInt(int64(len(randomCharset))))
+		if err != nil {
+			b[i] = randomCharset[time.Now().UnixNano()%int64(len(randomCharset))]
+		} else {
+			b[i] = randomCharset[n.Int64()]
+		}
+	}
+	return string(b)
+}
+
+// resolveImageDestinationPath resolves the destination path for an image.
+// If the file already exists in <imageFolder>/<year>/<filename>, it redirects it to <imageFolder>/DUPES/<filename>.
+// If <imageFolder>/DUPES/<filename> already exists, it appends a random 2-character string to the filename.
+func resolveImageDestinationPath(baseImageFolder string, year string, rawFilename string) (string, bool, error) {
+	filename := filepath.Base(rawFilename)
+	yearDir := filepath.Join(baseImageFolder, year)
+	if err := os.MkdirAll(yearDir, 0755); err != nil {
+		return "", false, fmt.Errorf("error creating year directory %s: %w", yearDir, err)
+	}
+
+	primaryPath := filepath.Join(yearDir, filename)
+	if _, err := os.Stat(primaryPath); os.IsNotExist(err) {
+		return primaryPath, false, nil
+	}
+
+	// File already exists in the year folder; redirect to DUPES folder
+	dupesDir := filepath.Join(baseImageFolder, "DUPES")
+	if err := os.MkdirAll(dupesDir, 0755); err != nil {
+		return "", false, fmt.Errorf("error creating DUPES directory %s: %w", dupesDir, err)
+	}
+
+	dupePath := filepath.Join(dupesDir, filename)
+	if _, err := os.Stat(dupePath); os.IsNotExist(err) {
+		return dupePath, true, nil
+	}
+
+	// File already exists in DUPES folder; append a random 2-character string to the filename
+	ext := filepath.Ext(filename)
+	nameWithoutExt := strings.TrimSuffix(filename, ext)
+
+	for i := 0; i < 100; i++ {
+		randSuffix := randomString(2)
+		candidateFilename := fmt.Sprintf("%s_%s%s", nameWithoutExt, randSuffix, ext)
+		candidatePath := filepath.Join(dupesDir, candidateFilename)
+		if _, err := os.Stat(candidatePath); os.IsNotExist(err) {
+			return candidatePath, true, nil
+		}
+	}
+
+	// Fallback with timestamp in case of unexpected collisions
+	fallbackFilename := fmt.Sprintf("%s_%d%s", nameWithoutExt, time.Now().UnixNano(), ext)
+	return filepath.Join(dupesDir, fallbackFilename), true, nil
+}
+
 // processDownloadedFile determines the target path for a downloaded temp file based on its type and attributes,
 // moves it to the appropriate destination directory, and returns the final path and log description.
 func processDownloadedFile(tempPath string, objectName string, contentType string, gcsLastModified time.Time, downloadFolder string, imageFolder string) (string, string, error) {
@@ -278,12 +340,17 @@ func processDownloadedFile(tempPath string, objectName string, contentType strin
 		if targetBase == "" {
 			targetBase = downloadFolder
 		}
-		yearDir := filepath.Join(targetBase, year)
-		if err := os.MkdirAll(yearDir, 0755); err != nil {
-			return "", "", fmt.Errorf("error creating year directory %s: %w", yearDir, err)
+		var isDupe bool
+		var err error
+		finalDestPath, isDupe, err = resolveImageDestinationPath(targetBase, year, objectName)
+		if err != nil {
+			return "", "", err
 		}
-		finalDestPath = filepath.Join(yearDir, filepath.Base(objectName))
-		logDetails = fmt.Sprintf("image (year: %s from %s)", year, source)
+		if isDupe {
+			logDetails = fmt.Sprintf("image [DUPLICATE redirected to DUPES] (year: %s from %s)", year, source)
+		} else {
+			logDetails = fmt.Sprintf("image (year: %s from %s)", year, source)
+		}
 	} else {
 		finalDestPath = filepath.Join(downloadFolder, objectName)
 		if err := os.MkdirAll(filepath.Dir(finalDestPath), 0755); err != nil {

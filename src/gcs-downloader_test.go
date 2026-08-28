@@ -393,3 +393,89 @@ func TestProcessDownloadedFile(t *testing.T) {
 		t.Errorf("expected logDetails 'file', got %q", logDetails)
 	}
 }
+
+func TestResolveImageDestinationPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	year := "2026"
+
+	// 1. First file: should go to <tmpDir>/2026/photo.jpg
+	p1, isDupe, err := resolveImageDestinationPath(tmpDir, year, "photo.jpg")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if isDupe {
+		t.Errorf("expected isDupe=false for first file")
+	}
+	expectedP1 := filepath.Join(tmpDir, "2026", "photo.jpg")
+	if p1 != expectedP1 {
+		t.Errorf("expected %q, got %q", expectedP1, p1)
+	}
+
+	// Create the file at p1 so it exists
+	if err := os.WriteFile(p1, []byte("image 1"), 0644); err != nil {
+		t.Fatalf("failed to write p1: %v", err)
+	}
+
+	// 2. Second file with same name: should go to <tmpDir>/DUPES/photo.jpg
+	p2, isDupe, err := resolveImageDestinationPath(tmpDir, year, "photo.jpg")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isDupe {
+		t.Errorf("expected isDupe=true for second duplicate file")
+	}
+	expectedP2 := filepath.Join(tmpDir, "DUPES", "photo.jpg")
+	if p2 != expectedP2 {
+		t.Errorf("expected %q, got %q", expectedP2, p2)
+	}
+
+	// Create the file at p2 so it exists in DUPES
+	if err := os.WriteFile(p2, []byte("image 2 (dupe 1)"), 0644); err != nil {
+		t.Fatalf("failed to write p2: %v", err)
+	}
+
+	// 3. Third file with same name: should go to <tmpDir>/DUPES/photo_<random2chars>.jpg
+	p3, isDupe, err := resolveImageDestinationPath(tmpDir, year, "photo.jpg")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isDupe {
+		t.Errorf("expected isDupe=true for third duplicate file")
+	}
+	if filepath.Dir(p3) != filepath.Join(tmpDir, "DUPES") {
+		t.Errorf("expected dir to be DUPES, got %q", filepath.Dir(p3))
+	}
+	if p3 == p2 {
+		t.Errorf("expected p3 to differ from p2, got %q", p3)
+	}
+	// Filename should match photo_??.jpg
+	baseName := filepath.Base(p3)
+	if len(baseName) != len("photo_XX.jpg") || filepath.Ext(baseName) != ".jpg" {
+		t.Errorf("expected format photo_XX.jpg, got %q", baseName)
+	}
+
+	// Create the file at p3 so it exists
+	if err := os.WriteFile(p3, []byte("image 3 (dupe 2)"), 0644); err != nil {
+		t.Fatalf("failed to write p3: %v", err)
+	}
+
+	// 4. Fourth file with same name: should also get a unique random name in DUPES
+	p4, isDupe, err := resolveImageDestinationPath(tmpDir, year, "photo.jpg")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !isDupe {
+		t.Errorf("expected isDupe=true for fourth duplicate file")
+	}
+	if p4 == p3 || p4 == p2 {
+		t.Errorf("expected p4 to be distinct from p2 and p3, got %q", p4)
+	}
+}
+
+func TestRandomString(t *testing.T) {
+	s1 := randomString(2)
+	s2 := randomString(2)
+	if len(s1) != 2 || len(s2) != 2 {
+		t.Errorf("expected string length 2, got %d and %d", len(s1), len(s2))
+	}
+}
