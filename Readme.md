@@ -31,8 +31,9 @@ To build and push the container image directly to Google Cloud Artifact Registry
 ```bash
 task cloud-build
 ```
-Default target image tag:
-`europe-west1-docker.pkg.dev/compute-stuff-461910/docker-images/paperless-dl:<VERSION>` (reads `<VERSION>` from `src/VERSION`).
+This builds and pushes both the versioned tag and the `:latest` tag:
+- `europe-west1-docker.pkg.dev/compute-stuff-461910/docker-images/paperless-dl:<VERSION>` (reads `<VERSION>` from `src/VERSION`)
+- `europe-west1-docker.pkg.dev/compute-stuff-461910/docker-images/paperless-dl:latest`
 
 You can also override variables on the command line:
 ```bash

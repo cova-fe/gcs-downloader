@@ -98,14 +98,16 @@ tasks:
       - task: test
 
   cloud-build:
-    desc: Build and push container image using Google Cloud Build
+    desc: Build and push container image using Google Cloud Build (tagged with version and latest)
     vars:
       IMAGE_TAG: '{{.IMAGE_TAG | default (printf "%s-docker.pkg.dev/%s/%s/%s:%s" .GCP_REGION .GCP_PROJECT .GCP_REPO .IMAGE_NAME .VERSION)}}'
+      IMAGE_LATEST_TAG: '{{.IMAGE_LATEST_TAG | default (printf "%s-docker.pkg.dev/%s/%s/%s:latest" .GCP_REGION .GCP_PROJECT .GCP_REPO .IMAGE_NAME)}}'
     cmds:
       - 'echo "Submitting build to GCP Cloud Build (BuildKit)..."'
-      - 'echo "Target Image Tag: {{.IMAGE_TAG}}"'
-      - 'echo "GCP Project:      {{.GCP_PROJECT}}"'
-      - 'gcloud builds submit . --config=cloudbuild.yaml --project="{{.GCP_PROJECT}}" --substitutions=_IMAGE_TAG="{{.IMAGE_TAG}}"'
+      - 'echo "Target Image Tag:  {{.IMAGE_TAG}}"'
+      - 'echo "Target Latest Tag: {{.IMAGE_LATEST_TAG}}"'
+      - 'echo "GCP Project:       {{.GCP_PROJECT}}"'
+      - 'gcloud builds submit . --config=cloudbuild.yaml --project="{{.GCP_PROJECT}}" --substitutions=_IMAGE_TAG="{{.IMAGE_TAG}}",_IMAGE_LATEST_TAG="{{.IMAGE_LATEST_TAG}}"'
 
   install-hooks:
     desc: Install pre-commit hook

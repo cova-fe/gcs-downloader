@@ -8,7 +8,10 @@ steps:
       - '--platform=linux/amd64'
       - '-t'
       - '$_IMAGE_TAG'
+      - '-t'
+      - '$_IMAGE_LATEST_TAG'
       - './src'
 
 images:
   - '$_IMAGE_TAG'
+  - '$_IMAGE_LATEST_TAG'
