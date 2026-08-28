@@ -22,7 +22,7 @@ UNFORMATTED=$(gofmt -l .)
 if [ -n "$UNFORMATTED" ]; then
     echo "ERROR: The following files need formatting with gofmt:"
     echo "$UNFORMATTED"
-    echo "Run 'make fmt' or 'gofmt -w .' to fix."
+    echo "Run 'task fmt' or 'gofmt -w .' to fix."
     exit 1
 fi
 

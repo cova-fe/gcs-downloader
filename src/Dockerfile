@@ -7,11 +7,13 @@ COPY go.mod ./
 COPY go.sum ./
 RUN go mod download
 
-COPY Makefile ./
 COPY VERSION ./
-COPY gcs-downloader.go ./
+COPY *.go ./
 
-RUN make build-linux-amd64
+RUN VERSION=$(cat VERSION 2>/dev/null || echo "dev") && \
+    BUILD_TIME=$(date +"%Y-%m-%d %H:%M:%S %Z") && \
+    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o gcs-downloader-linux-amd64 \
+    -ldflags "-X 'main.version=${VERSION}' -X 'main.buildTime=${BUILD_TIME}'" .
 
 # Stage 2: Create the final minimal image
 FROM alpine:latest

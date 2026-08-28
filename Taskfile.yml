@@ -1,0 +1,130 @@
+version: '3'
+
+vars:
+  APP_NAME: gcs-downloader
+  VERSION:
+    sh: cat src/VERSION 2>/dev/null || echo "dev"
+  BUILD_TIME:
+    sh: date +"%Y-%m-%d %H:%M:%S %Z"
+  LDFLAGS: -X "main.version={{.VERSION}}" -X "main.buildTime={{.BUILD_TIME}}"
+
+  # GCP Cloud Build variables
+  GCP_PROJECT: '{{.GCP_PROJECT | default "compute-stuff-461910"}}'
+  GCP_REGION: '{{.GCP_REGION | default "europe-west1"}}'
+  GCP_REPO: '{{.GCP_REPO | default "docker-images"}}'
+  IMAGE_NAME: '{{.IMAGE_NAME | default "paperless-dl"}}'
+
+tasks:
+  default:
+    desc: Build binary for current OS and architecture
+    cmds:
+      - task: build
+
+  build:
+    desc: Build gcs-downloader for current OS/ARCH
+    dir: src
+    cmds:
+      - 'echo "Building {{.APP_NAME}} ({{.VERSION}}) for current OS/ARCH..."'
+      - "go build -o {{.APP_NAME}} -ldflags '{{.LDFLAGS}}' gcs-downloader.go"
+      - 'echo "Build complete: src/{{.APP_NAME}}"'
+
+  build-macos-arm:
+    desc: Build gcs-downloader for macOS ARM (darwin/arm64)
+    dir: src
+    cmds:
+      - 'echo "Building {{.APP_NAME}} for macOS ARM (darwin/arm64)..."'
+      - "GOOS=darwin GOARCH=arm64 go build -o {{.APP_NAME}}-macos-arm64 -ldflags '{{.LDFLAGS}}' gcs-downloader.go"
+      - 'echo "Build complete: src/{{.APP_NAME}}-macos-arm64"'
+
+  build-linux-amd64:
+    desc: Build gcs-downloader for Linux AMD64 (linux/amd64)
+    dir: src
+    cmds:
+      - 'echo "Building {{.APP_NAME}} for Linux AMD64 (linux/amd64)..."'
+      - "CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o {{.APP_NAME}}-linux-amd64 -ldflags '{{.LDFLAGS}}' gcs-downloader.go"
+      - 'echo "Build complete: src/{{.APP_NAME}}-linux-amd64"'
+
+  test:
+    desc: Run unit tests
+    dir: src
+    cmds:
+      - 'echo "Running unit tests..."'
+      - go test -v ./...
+
+  vet:
+    desc: Run go vet on codebase
+    dir: src
+    cmds:
+      - 'echo "Running go vet..."'
+      - go vet ./...
+
+  fmt:
+    desc: Format Go source files using gofmt
+    dir: src
+    cmds:
+      - 'echo "Formatting Go files..."'
+      - gofmt -w .
+
+  fmt-check:
+    desc: Check Go source files formatting
+    dir: src
+    cmds:
+      - |
+        UNFORMATTED=$(gofmt -l .)
+        if [ -n "$UNFORMATTED" ]; then
+          echo "The following files are not formatted properly:"
+          echo "$UNFORMATTED"
+          exit 1
+        fi
+        echo "Formatting OK"
+
+  secret-scan:
+    desc: Scan repository for leaked secrets using Trivy
+    cmds:
+      - |
+        if command -v trivy >/dev/null 2>&1; then
+          echo "Scanning repository for secrets with Trivy..."
+          trivy fs --scanners secret --exit-code 1 .
+        else
+          echo "Warning: Trivy not installed. Install it via 'brew install trivy' for secret scanning."
+        fi
+
+  check:
+    desc: Run all quality checks (formatting check, secret scan, go vet, and tests)
+    cmds:
+      - task: fmt-check
+      - task: secret-scan
+      - task: vet
+      - task: test
+
+  cloud-build:
+    desc: Build and push container image using Google Cloud Build
+    vars:
+      IMAGE_TAG: '{{.IMAGE_TAG | default (printf "%s-docker.pkg.dev/%s/%s/%s:%s" .GCP_REGION .GCP_PROJECT .GCP_REPO .IMAGE_NAME .VERSION)}}'
+    cmds:
+      - 'echo "Submitting build to GCP Cloud Build (BuildKit)..."'
+      - 'echo "Target Image Tag: {{.IMAGE_TAG}}"'
+      - 'echo "GCP Project:      {{.GCP_PROJECT}}"'
+      - 'gcloud builds submit . --config=cloudbuild.yaml --project="{{.GCP_PROJECT}}" --substitutions=_IMAGE_TAG="{{.IMAGE_TAG}}"'
+
+  install-hooks:
+    desc: Install pre-commit hook
+    cmds:
+      - |
+        if command -v pre-commit >/dev/null 2>&1; then
+          pre-commit install
+          echo "Pre-commit hook installed via pre-commit framework"
+        else
+          mkdir -p .git/hooks
+          cp .githooks/pre-commit .git/hooks/pre-commit
+          chmod +x .git/hooks/pre-commit
+          echo "Pre-commit hook installed into .git/hooks/pre-commit"
+        fi
+
+  clean:
+    desc: Remove build artifacts
+    dir: src
+    cmds:
+      - 'echo "Cleaning build artifacts..."'
+      - rm -f {{.APP_NAME}} {{.APP_NAME}}-macos-arm64 {{.APP_NAME}}-linux-amd64
+      - 'echo "Clean complete."'

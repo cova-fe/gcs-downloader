@@ -13,21 +13,38 @@ To say it in another words: I run the code on mi machine and it more or less wor
 
 ### Build & Test
 
-You have targets in the Makefile:
-1. `make test`: Run unit tests.
-2. `make secret-scan`: Scan the repository for leaked secrets using Trivy.
-3. `make check`: Run formatting checks (`gofmt`), secret leak scanning (`trivy`), static analysis (`go vet`), and unit tests.
-4. `make fmt`: Auto-format all Go source files.
-5. `make install-hooks`: Install the Git pre-commit hook (supports Python `pre-commit` framework or native git hook).
-6. `make build`: Build the binary for the current architecture.
-7. `make build-macos-arm`: Build for macOS ARM (darwin/arm64).
-8. `make build-linux-amd64`: Build for Linux AMD64 (linux/amd64).
+This project uses [Task](https://taskfile.dev/) (`task`) for build automation:
+1. `task build`: Build the binary for the current architecture.
+2. `task test`: Run unit tests.
+3. `task secret-scan`: Scan the repository for leaked secrets using Trivy.
+4. `task check`: Run formatting checks (`gofmt`), secret leak scanning (`trivy`), static analysis (`go vet`), and unit tests.
+5. `task fmt`: Auto-format all Go source files.
+6. `task build-macos-arm`: Build for macOS ARM (darwin/arm64).
+7. `task build-linux-amd64`: Build for Linux AMD64 (linux/amd64).
+8. `task cloud-build`: Build and push the container image to GCP Artifact Registry via Google Cloud Build.
+9. `task install-hooks`: Install the Git pre-commit hook.
+10. `task clean`: Remove local build artifacts.
+
+### GCP Cloud Build
+
+To build and push the container image directly to Google Cloud Artifact Registry using Google Cloud Build:
+```bash
+task cloud-build
+```
+Default target image tag:
+`europe-west1-docker.pkg.dev/compute-stuff-461910/docker-images/paperless-dl:<VERSION>` (reads `<VERSION>` from `src/VERSION`).
+
+You can also override variables on the command line:
+```bash
+task cloud-build VERSION=0.0.9
+task cloud-build GCP_PROJECT=my-project GCP_REGION=europe-west1 IMAGE_NAME=my-downloader
+```
 
 ### Pre-commit Hook & Secret Leak Prevention
 
 To ensure tests, formatting, and secret leak scanning run automatically before committing:
 ```bash
-make install-hooks
+task install-hooks
 ```
 Or if you use the `pre-commit` tool:
 ```bash
@@ -43,7 +60,7 @@ The pre-commit configuration checks:
 
 ### Docker
 
-The Dockerfile uses the makefile to build an alpine-based image
+The multi-stage `Dockerfile` (located in `src/Dockerfile`) compiles the Linux AMD64 binary and packages it into a minimal Alpine container.
 
 ---
 
