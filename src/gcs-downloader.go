@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -313,6 +314,10 @@ func processGCSObject(ctx context.Context, client *storage.Client, bucketName st
 	obj := client.Bucket(bucketName).Object(objectName)
 	rc, err := obj.NewReader(ctx)
 	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			logf("Notice: Object %s does not exist in bucket %s (already processed or removed). Skipping.", objectName, bucketName)
+			return nil
+		}
 		return fmt.Errorf("error creating reader for object %s in bucket %s: %w", objectName, bucketName, err)
 	}
 	defer rc.Close()
@@ -355,7 +360,11 @@ func processGCSObject(ctx context.Context, client *storage.Client, bucketName st
 
 	// 2. Delete the file from the bucket
 	if err := obj.Delete(ctx); err != nil {
-		logf("Warning: Error deleting object %s from bucket %s: %v", objectName, bucketName, err)
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			logf("Notice: Object %s in bucket %s was already deleted", objectName, bucketName)
+		} else {
+			logf("Warning: Error deleting object %s from bucket %s: %v", objectName, bucketName, err)
+		}
 	} else {
 		logf("Successfully deleted object %s from bucket %s", objectName, bucketName)
 	}
