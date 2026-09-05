@@ -2,8 +2,8 @@
 
   paperless-dl:
     # Replace with the full path to your image in Artifact Registry.
-    # Example: europe-west1-docker.pkg.dev/your-gcp-project-id/docker-images/gcs-downloader:v1.0.0
-    image: europe-west1-docker.pkg.dev/your-gcp-project-id/docker-images/gcs-downloader:0.0.7
+    # Example: europe-west1-docker.pkg.dev/your-gcp-project-id/docker-images/paperless-dl:0.2.0
+    image: europe-west1-docker.pkg.dev/compute-stuff-461910/docker-images/paperless-dl:0.2.0
 
     container_name: paperless-dl # A friendly name for your container
 
