@@ -305,21 +305,14 @@ func TestDetermineImageYear(t *testing.T) {
 		t.Errorf("expected 2023 from filename, got year=%q, source=%q", year, source)
 	}
 
-	// Scenario 3: No EXIF, no date in filename -> falls back to GCS metadata timestamp
+	// Scenario 3: No EXIF, no date in filename -> returns NO_DATE
 	randomPath := filepath.Join(tmpDir, "photo.jpg")
 	if err := os.WriteFile(randomPath, []byte("dummy image content"), 0644); err != nil {
 		t.Fatalf("failed to write random file: %v", err)
 	}
 	year, source = determineImageYear(randomPath, "photo.jpg", gcsTime)
-	if year != "2020" || source != "GCS metadata" {
-		t.Errorf("expected 2020 from GCS metadata, got year=%q, source=%q", year, source)
-	}
-
-	// Scenario 4: No EXIF, no date in filename, no GCS metadata -> falls back to current year
-	year, source = determineImageYear(randomPath, "photo.jpg", time.Time{})
-	currentYearStr := time.Now().Format("2006")
-	if year != currentYearStr || source != "fallback (current year)" {
-		t.Errorf("expected %s from fallback, got year=%q, source=%q", currentYearStr, year, source)
+	if year != "NO_DATE" || source != "fallback (no date detected)" {
+		t.Errorf("expected NO_DATE from fallback, got year=%q, source=%q", year, source)
 	}
 }
 
@@ -442,7 +435,27 @@ func TestProcessDownloadedFile(t *testing.T) {
 		t.Errorf("expected logDetails starting with 'video', got %q", logDetails)
 	}
 
-	// 5. Non-image, non-video, non-PDF file -> goes to downloadDir directly
+	// 5. Undated image (no EXIF, no date in filename) -> goes to imageDir/NO_DATE/<filename>
+	undatedTemp := filepath.Join(tmpBase, "temp_undated.tmp")
+	if err := os.WriteFile(undatedTemp, []byte("undated image content"), 0644); err != nil {
+		t.Fatalf("failed to write undated image: %v", err)
+	}
+	destPath, logDetails, err = processDownloadedFile(undatedTemp, "random_photo.jpg", "image/jpeg", time.Time{}, downloadDir, imageDir)
+	if err != nil {
+		t.Fatalf("processDownloadedFile failed for undated image: %v", err)
+	}
+	expectedUndatedPath := filepath.Join(imageDir, "NO_DATE", "random_photo.jpg")
+	if destPath != expectedUndatedPath {
+		t.Errorf("Undated image destPath = %q; expected %q", destPath, expectedUndatedPath)
+	}
+	if _, err := os.Stat(expectedUndatedPath); os.IsNotExist(err) {
+		t.Errorf("Undated image not found at expected location %q", expectedUndatedPath)
+	}
+	if !strings.Contains(logDetails, "no date detected") {
+		t.Errorf("expected logDetails containing 'no date detected', got %q", logDetails)
+	}
+
+	// 6. Non-image, non-video, non-PDF file -> goes to downloadDir directly
 	txtTemp := filepath.Join(tmpBase, "temp_txt.tmp")
 	if err := os.WriteFile(txtTemp, []byte("just a text file"), 0644); err != nil {
 		t.Fatalf("failed to write temp txt: %v", err)
@@ -538,6 +551,19 @@ func TestResolveImageDestinationPath(t *testing.T) {
 	}
 	if p4 == p3 || p4 == p2 {
 		t.Errorf("expected p4 to be distinct from p2 and p3, got %q", p4)
+	}
+
+	// 5. NO_DATE folder routing
+	pNoDate, isDupe, err := resolveImageDestinationPath(tmpDir, "NO_DATE", "undated.png")
+	if err != nil {
+		t.Fatalf("unexpected error for NO_DATE: %v", err)
+	}
+	if isDupe {
+		t.Errorf("expected isDupe=false for first undated file")
+	}
+	expectedNoDate := filepath.Join(tmpDir, "NO_DATE", "undated.png")
+	if pNoDate != expectedNoDate {
+		t.Errorf("expected %q, got %q", expectedNoDate, pNoDate)
 	}
 }
 

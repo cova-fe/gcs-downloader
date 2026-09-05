@@ -107,14 +107,13 @@ This tool relies on the Google Cloud client library for Go, which supports vario
 When an image (e.g. `.jpg`, `.png`, `.webp`, `.heic`, `.tiff`, etc.) or video (e.g. `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`, `.m4v`, etc.) is downloaded, the application determines the creation year using the following priority:
 1. **EXIF Metadata:** Reads standard EXIF tags (`DateTimeOriginal`, `DateTimeDigitized`, `DateTime`).
 2. **Filename Date Heuristics:** Matches timestamps and dates in filenames (e.g., `IMG_20230514_...jpg`, `VID_20230815_...mp4`, `Screenshot_2022-05-10.png`).
-3. **GCS Metadata:** Uses the object's `LastModified` timestamp from Google Cloud Storage.
-4. **Fallback:** Defaults to the current year.
+3. **Fallback (`NO_DATE`):** If no creation date can be determined, the file is placed into `<image-dest>/NO_DATE/<filename>`.
 
-The file is then placed into `<image-dest>/<year>/<filename>`. PDF and non-media documents continue to be downloaded directly into `--dest` without any changes.
+The file is then placed into `<image-dest>/<year>/<filename>` (or `<image-dest>/NO_DATE/<filename>`). PDF and non-media documents continue to be downloaded directly into `--dest` without any changes.
 
 ### Duplicate Media Handling
 
-If an image or video arrives with a filename that already exists in the destination `<image-dest>/<year>/` folder:
+If an image or video arrives with a filename that already exists in the destination `<image-dest>/<year>/` or `<image-dest>/NO_DATE/` folder:
 1. The duplicate file is automatically diverted to a `DUPES` folder at the root of the media directory (`<image-dest>/DUPES/<filename>`).
 2. If a file with that name is already present in the `DUPES` folder, a random 2-character suffix is appended to the filename before the extension (e.g. `photo_a1.jpg` or `video_k9.mp4`) to prevent overwriting.
 

@@ -269,7 +269,8 @@ func extractYearFromTimestamps(timestamps ...time.Time) string {
 	return ""
 }
 
-// determineMediaYear tries various strategies to identify the year of image/video creation
+// determineMediaYear tries various strategies to identify the year of image/video creation.
+// If no creation date can be determined from EXIF or filename, it returns "NO_DATE".
 func determineMediaYear(filePath string, filename string, timestamps ...time.Time) (string, string) {
 	if year, err := extractYearFromEXIF(filePath); err == nil && year != "" {
 		return year, "EXIF"
@@ -277,10 +278,7 @@ func determineMediaYear(filePath string, filename string, timestamps ...time.Tim
 	if year := extractYearFromFilename(filename); year != "" {
 		return year, "filename"
 	}
-	if year := extractYearFromTimestamps(timestamps...); year != "" {
-		return year, "GCS metadata"
-	}
-	return fmt.Sprintf("%04d", time.Now().Year()), "fallback (current year)"
+	return "NO_DATE", "fallback (no date detected)"
 }
 
 // determineImageYear is retained for backwards compatibility
@@ -417,10 +415,16 @@ func processDownloadedFile(tempPath string, objectName string, contentType strin
 		if isVideoFile {
 			mediaType = "video"
 		}
-		if isDupe {
-			logDetails = fmt.Sprintf("%s [DUPLICATE redirected to DUPES] (year: %s from %s)", mediaType, year, source)
+		var yearInfo string
+		if year == "NO_DATE" {
+			yearInfo = "no date detected"
 		} else {
-			logDetails = fmt.Sprintf("%s (year: %s from %s)", mediaType, year, source)
+			yearInfo = fmt.Sprintf("year: %s from %s", year, source)
+		}
+		if isDupe {
+			logDetails = fmt.Sprintf("%s [DUPLICATE redirected to DUPES] (%s)", mediaType, yearInfo)
+		} else {
+			logDetails = fmt.Sprintf("%s (%s)", mediaType, yearInfo)
 		}
 	} else {
 		finalDestPath = filepath.Join(downloadFolder, objectName)
