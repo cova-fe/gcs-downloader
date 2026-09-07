@@ -3,13 +3,15 @@
   paperless-dl:
     # Replace with the full path to your image in Artifact Registry.
     # Example: europe-west1-docker.pkg.dev/your-gcp-project-id/docker-images/paperless-dl:0.2.0
-    image: europe-west1-docker.pkg.dev/compute-stuff-461910/docker-images/paperless-dl:0.2.0
+    image: europe-west1-docker.pkg.dev/compute-stuff-461910/docker-images/paperless-dl:latest
+    pull_policy: always
 
     container_name: paperless-dl # A friendly name for your container
 
     command:
       - "--dest=/app/downloads"
-      - "--image-dest=/app/images" # Optional: images sorted into year subdirectories
+      - "--image-dest=/app/images" # Optional: images and videos sorted into year subdirectories
+      - "--generic-dest=/app/generic" # Optional: generic/unclassified files (archives, binaries, etc.)
       - "--project=your-gcp-project-id"
       - "--pubsub-topic=your-gcs-topic"
       - "--pubsub-subscription=your-gcs-subscription"
@@ -35,7 +37,8 @@
     # - MODE: 'rw' for read-write (which you need for saving files).
     volumes:
       - /volume1/paperless:/app/downloads:rw
-      - /volume1/photos:/app/images:rw # Mount for images sorted by year
+      - /volume1/photos:/app/images:rw # Mount for images and videos sorted by year
+      - /volume1/generic:/app/generic:rw # Mount for generic/unclassified files
       # ^^^ REMEMBER TO ADJUST THESE PATHS ^^^
       #  - Left side: Path on your Synology NAS (e.g., a subfolder in your 'docker' shared folder)
       #  - Right side: Path inside the container where your app saves files (e.g., /app/downloads)

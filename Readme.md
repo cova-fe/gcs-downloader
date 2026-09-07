@@ -84,9 +84,11 @@ This tool relies on the Google Cloud client library for Go, which supports vario
 
 #### Available Flags:
 
---dest <path>: (Required) The path to the local folder for downloaded files (e.g., PDFs and general documents).
+--dest <path>: (Required) The path to the local folder for documents (e.g., PDFs, Word docs, OpenDocument files, text, spreadsheets, presentations).
 
 --image-dest <path>: (Optional) The path to the local folder for downloaded images and videos. Media files will be automatically placed in year-based subdirectories (e.g., `/images/2026/photo.jpg` or `/images/2023/video.mp4`). If not specified, defaults to the `--dest` folder.
+
+--generic-dest <path>: (Optional) The path to the local folder for generic / unclassified files (e.g., `.zip`, `.tar.gz`, `.iso`, binaries). If not specified, defaults to the `--dest` folder.
 
 --pubsub-topic <name>: (Required) Name of the Google Cloud Pub/Sub topic to listen to.
 
@@ -102,14 +104,23 @@ This tool relies on the Google Cloud client library for Go, which supports vario
 
 --version: (Optional) Display version and build information.
 
-### Image & Video Sorting by Year
+### File Classification & Routing
 
-When an image (e.g. `.jpg`, `.png`, `.webp`, `.heic`, `.tiff`, etc.) or video (e.g. `.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`, `.m4v`, etc.) is downloaded, the application determines the creation year using the following priority:
-1. **EXIF Metadata:** Reads standard EXIF tags (`DateTimeOriginal`, `DateTimeDigitized`, `DateTime`).
-2. **Filename Date Heuristics:** Matches timestamps and dates in filenames (e.g., `IMG_20230514_...jpg`, `VID_20230815_...mp4`, `Screenshot_2022-05-10.png`).
-3. **Fallback (`NO_DATE`):** If no creation date can be determined, the file is placed into `<image-dest>/NO_DATE/<filename>`.
+Downloaded files are automatically routed to one of three destination folders:
 
-The file is then placed into `<image-dest>/<year>/<filename>` (or `<image-dest>/NO_DATE/<filename>`). PDF and non-media documents continue to be downloaded directly into `--dest` without any changes.
+1. **Documents (`--dest`)**:
+   - Files matching document types: PDF (`.pdf`), Microsoft Office (`.docx`, `.doc`, `.xlsx`, `.xls`, `.pptx`, `.ppt`), OpenDocument (`.odt`, `.odp`, `.ods`, `.odg`), Text/Markdown (`.txt`, `.md`, `.rtf`, `.csv`), eBooks (`.epub`, `.mobi`, `.djvu`), emails (`.eml`, `.msg`), etc.
+   - Saved directly into `--dest/<filename>`.
+
+2. **Images & Videos (`--image-dest`)**:
+   - Photos (`.jpg`, `.png`, `.webp`, `.heic`, `.tiff`, `.gif`, `.raw`, etc.) and videos (`.mp4`, `.mov`, `.avi`, `.mkv`, `.webm`, `.m4v`, etc.).
+   - Sorted into year subdirectories (`<image-dest>/<year>/<filename>`) based on EXIF metadata or filename date heuristics.
+   - If no creation date is detected, placed into `<image-dest>/NO_DATE/<filename>`.
+   - If a duplicate filename exists in the destination, diverted to `<image-dest>/DUPES/<filename>`.
+
+3. **Generic Files (`--generic-dest`)**:
+   - Any other unclassified files (e.g., `.zip`, `.tar.gz`, `.iso`, binaries, installer packages).
+   - Saved directly into `--generic-dest/<filename>`. If `--generic-dest` is omitted, defaults to `--dest`.
 
 ### Duplicate Media Handling
 

@@ -26,7 +26,7 @@ WORKDIR /app
 
 COPY --from=builder /app/gcs-downloader-linux-amd64 ./gcs-downloader
 
-RUN mkdir -p /app/downloads /app/images
+RUN mkdir -p /app/downloads /app/images /app/generic
 
 # Set the entrypoint to run the downloader application
 ENTRYPOINT ["./gcs-downloader"]

@@ -30,6 +30,7 @@ import (
 var (
 	downloadFolder            string
 	imageFolder               string
+	genericFolder             string
 	bucketName                string // This is still used for GCS client initialization if needed for processing
 	projectID                 string
 	impersonateServiceAccount string
@@ -37,6 +38,72 @@ var (
 	pubsubTopicName           string // New: Pub/Sub topic name
 	pubsubSubscriptionName    string // New: Pub/Sub subscription name
 )
+
+// Known document extensions (PDF, Word, OpenDocument, Spreadsheets, Presentations, eBooks, text)
+var documentExtensions = map[string]bool{
+	// PDF
+	".pdf": true,
+	// Word / OpenDocument text
+	".doc":  true,
+	".docx": true,
+	".docm": true,
+	".dot":  true,
+	".dotx": true,
+	".odt":  true,
+	".ott":  true,
+	".fodt": true,
+	".rtf":  true,
+	// Spreadsheets
+	".xls":  true,
+	".xlsx": true,
+	".xlsm": true,
+	".xlsb": true,
+	".xlt":  true,
+	".xltx": true,
+	".ods":  true,
+	".ots":  true,
+	".fods": true,
+	".csv":  true,
+	".tsv":  true,
+	// Presentations
+	".ppt":  true,
+	".pptx": true,
+	".pptm": true,
+	".pps":  true,
+	".ppsx": true,
+	".pot":  true,
+	".potx": true,
+	".odp":  true,
+	".otp":  true,
+	".fodp": true,
+	// Drawings & OpenDocument other
+	".odg": true,
+	".odf": true,
+	// Text, Markdown, eBooks
+	".txt":      true,
+	".text":     true,
+	".md":       true,
+	".markdown": true,
+	".rst":      true,
+	".tex":      true,
+	".epub":     true,
+	".mobi":     true,
+	".azw":      true,
+	".azw3":     true,
+	".djvu":     true,
+	".djv":      true,
+	// Apple iWork
+	".pages":   true,
+	".numbers": true,
+	".key":     true,
+	// Emails & markup
+	".eml":   true,
+	".msg":   true,
+	".html":  true,
+	".htm":   true,
+	".xhtml": true,
+	".xml":   true,
+}
 
 // Known image extensions
 var imageExtensions = map[string]bool{
@@ -118,6 +185,28 @@ func isPDF(filename string, contentType string) bool {
 	return false
 }
 
+// isDocument determines whether the file is a document (PDF, Word, OpenDocument, text, spreadsheet, presentation, etc.)
+func isDocument(filename string, contentType string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	if documentExtensions[ext] {
+		return true
+	}
+	ct := strings.ToLower(contentType)
+	if strings.EqualFold(ct, "application/pdf") ||
+		strings.HasPrefix(ct, "application/msword") ||
+		strings.HasPrefix(ct, "application/vnd.openxmlformats-officedocument.") ||
+		strings.HasPrefix(ct, "application/vnd.oasis.opendocument.") ||
+		strings.HasPrefix(ct, "application/vnd.ms-excel") ||
+		strings.HasPrefix(ct, "application/vnd.ms-powerpoint") ||
+		strings.HasPrefix(ct, "application/rtf") ||
+		strings.HasPrefix(ct, "application/epub+zip") ||
+		strings.HasPrefix(ct, "text/") ||
+		strings.EqualFold(ct, "message/rfc822") {
+		return true
+	}
+	return false
+}
+
 // isImage determines whether the file is an image based on extension or MIME type
 func isImage(filename string, contentType string) bool {
 	ext := strings.ToLower(filepath.Ext(filename))
@@ -149,28 +238,36 @@ func isMedia(filename string, contentType string) bool {
 	return isImage(filename, contentType) || isVideo(filename, contentType)
 }
 
-// sniffedIsMedia inspects the initial bytes of a file to check if it's an image or video
-func sniffedIsMedia(filePath string) (bool, bool) {
-	// returns (isMedia, isVideo)
+// sniffedFileType inspects the initial bytes of a file to detect if it is a PDF or media (image/video)
+func sniffedFileType(filePath string) (isDoc bool, isMed bool, isVid bool) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return false, false
+		return false, false, false
 	}
 	defer f.Close()
 
 	buf := make([]byte, 512)
 	n, err := f.Read(buf)
 	if err != nil && err != io.EOF {
-		return false, false
+		return false, false, false
 	}
 	ct := strings.ToLower(http.DetectContentType(buf[:n]))
+	if ct == "application/pdf" {
+		return true, false, false
+	}
 	if strings.HasPrefix(ct, "video/") {
-		return true, true
+		return false, true, true
 	}
 	if strings.HasPrefix(ct, "image/") {
-		return true, false
+		return false, true, false
 	}
-	return false, false
+	return false, false, false
+}
+
+// sniffedIsMedia inspects the initial bytes of a file to check if it's an image or video
+func sniffedIsMedia(filePath string) (bool, bool) {
+	_, isMed, isVid := sniffedFileType(filePath)
+	return isMed, isVid
 }
 
 // sniffedIsImage is retained for backwards compatibility
@@ -379,14 +476,16 @@ func resolveImageDestinationPath(baseImageFolder string, year string, rawFilenam
 
 // processDownloadedFile determines the target path for a downloaded temp file based on its type and attributes,
 // moves it to the appropriate destination directory, and returns the final path and log description.
-func processDownloadedFile(tempPath string, objectName string, contentType string, gcsLastModified time.Time, downloadFolder string, imageFolder string) (string, string, error) {
-	isPDFFile := isPDF(objectName, contentType)
-	isImageFile := !isPDFFile && isImage(objectName, contentType)
-	isVideoFile := !isPDFFile && !isImageFile && isVideo(objectName, contentType)
+func processDownloadedFile(tempPath string, objectName string, contentType string, gcsLastModified time.Time, downloadFolder string, imageFolder string, genericFolder string) (string, string, error) {
+	isDocFile := isDocument(objectName, contentType)
+	isImageFile := !isDocFile && isImage(objectName, contentType)
+	isVideoFile := !isDocFile && !isImageFile && isVideo(objectName, contentType)
 
-	// If not identified as PDF, image, or video yet, check content sniffing
-	if !isPDFFile && !isImageFile && !isVideoFile {
-		if isMed, isVid := sniffedIsMedia(tempPath); isMed {
+	// If not identified as document, image, or video yet, check content sniffing
+	if !isDocFile && !isImageFile && !isVideoFile {
+		if isDoc, isMed, isVid := sniffedFileType(tempPath); isDoc {
+			isDocFile = true
+		} else if isMed {
 			if isVid {
 				isVideoFile = true
 			} else {
@@ -426,16 +525,27 @@ func processDownloadedFile(tempPath string, objectName string, contentType strin
 		} else {
 			logDetails = fmt.Sprintf("%s (%s)", mediaType, yearInfo)
 		}
-	} else {
+	} else if isDocFile {
 		finalDestPath = filepath.Join(downloadFolder, objectName)
 		if err := os.MkdirAll(filepath.Dir(finalDestPath), 0755); err != nil {
 			return "", "", fmt.Errorf("error creating destination directory for %s: %w", finalDestPath, err)
 		}
-		if isPDFFile {
+		if isPDF(objectName, contentType) {
 			logDetails = "PDF"
 		} else {
-			logDetails = "file"
+			logDetails = "document"
 		}
+	} else {
+		// Generic file (archives, binaries, unclassified files, etc.)
+		targetBase := genericFolder
+		if targetBase == "" {
+			targetBase = downloadFolder
+		}
+		finalDestPath = filepath.Join(targetBase, objectName)
+		if err := os.MkdirAll(filepath.Dir(finalDestPath), 0755); err != nil {
+			return "", "", fmt.Errorf("error creating generic destination directory for %s: %w", finalDestPath, err)
+		}
+		logDetails = "generic file"
 	}
 
 	if err := moveFile(tempPath, finalDestPath); err != nil {
@@ -447,7 +557,7 @@ func processDownloadedFile(tempPath string, objectName string, contentType strin
 
 // Helper function to process a single GCS object (download and delete)
 // Now takes bucketName and objectName as parameters directly from the Pub/Sub message
-func processGCSObject(ctx context.Context, client *storage.Client, bucketName string, objectName string, downloadFolder string, imageFolder string) error {
+func processGCSObject(ctx context.Context, client *storage.Client, bucketName string, objectName string, downloadFolder string, imageFolder string, genericFolder string) error {
 	if isVerbose {
 		logf("Verbose: Attempting to process object: %s from bucket %s", objectName, bucketName)
 	}
@@ -464,12 +574,14 @@ func processGCSObject(ctx context.Context, client *storage.Client, bucketName st
 	}
 	defer rc.Close()
 
-	isPDFFile := isPDF(objectName, rc.Attrs.ContentType)
-	isMediaFile := !isPDFFile && (isImage(objectName, rc.Attrs.ContentType) || isVideo(objectName, rc.Attrs.ContentType))
+	isDocFile := isDocument(objectName, rc.Attrs.ContentType)
+	isMediaFile := !isDocFile && (isImage(objectName, rc.Attrs.ContentType) || isVideo(objectName, rc.Attrs.ContentType))
 
 	baseDir := downloadFolder
 	if isMediaFile && imageFolder != "" {
 		baseDir = imageFolder
+	} else if !isDocFile && !isMediaFile && genericFolder != "" {
+		baseDir = genericFolder
 	}
 
 	tempFile, err := os.CreateTemp(baseDir, ".tmp-download-*")
@@ -492,7 +604,7 @@ func processGCSObject(ctx context.Context, client *storage.Client, bucketName st
 		return fmt.Errorf("error closing temp file %s: %w", tempPath, err)
 	}
 
-	finalDestPath, logDetails, err := processDownloadedFile(tempPath, objectName, rc.Attrs.ContentType, rc.Attrs.LastModified, downloadFolder, imageFolder)
+	finalDestPath, logDetails, err := processDownloadedFile(tempPath, objectName, rc.Attrs.ContentType, rc.Attrs.LastModified, downloadFolder, imageFolder, genericFolder)
 	if err != nil {
 		return err
 	}
@@ -514,8 +626,9 @@ func processGCSObject(ctx context.Context, client *storage.Client, bucketName st
 }
 
 func main() {
-	flag.StringVar(&downloadFolder, "dest", "", "Path to the folder where files will be downloaded (e.g., /app/downloads)")
+	flag.StringVar(&downloadFolder, "dest", "", "Path to the folder where document files (PDFs, docs, odp, etc.) will be downloaded (e.g., /app/downloads)")
 	flag.StringVar(&imageFolder, "image-dest", "", "Optional: Path to the folder where images and videos will be downloaded in year-based subdirectories (e.g., /app/images). If not specified, defaults to --dest.")
+	flag.StringVar(&genericFolder, "generic-dest", "", "Optional: Path to the folder where generic/unclassified files (archives, binaries, etc.) will be downloaded (e.g., /app/generic). If not specified, defaults to --dest.")
 	flag.StringVar(&bucketName, "bucket", "", "Optional: Name of the Google Cloud Storage bucket. This is only used for GCS client initialization if --impersonate-sa is used. Pub/Sub messages will provide the actual bucket name.")
 	flag.StringVar(&projectID, "project", "", "Your Google Cloud Project ID. Required for Pub/Sub client.")
 	flag.StringVar(&impersonateServiceAccount, "impersonate-sa", "", "Optional: Email of the service account to impersonate (e.g., file-downloader-sa@your-project-id.iam.gserviceaccount.com)")
@@ -577,10 +690,26 @@ func main() {
 		}
 	}
 
+	if genericFolder == "" {
+		genericFolder = downloadFolder
+	} else {
+		if _, err := os.Stat(genericFolder); os.IsNotExist(err) {
+			logf("Generic destination folder '%s' does not exist. Creating it...", genericFolder)
+			if err := os.MkdirAll(genericFolder, 0755); err != nil {
+				logf("Error creating generic destination folder '%s': %v", genericFolder, err)
+				os.Exit(1)
+			}
+		} else if err != nil {
+			logf("Error checking generic destination folder '%s': %v", genericFolder, err)
+			os.Exit(1)
+		}
+	}
+
 	logf("Starting GCS file downloader (Version: %s, Built: %s)", version, buildTime)
 	logf("Listening to Pub/Sub Topic: %s (Subscription: %s)", pubsubTopicName, pubsubSubscriptionName)
-	logf("Destination local folder (PDF/documents): %s", downloadFolder)
+	logf("Destination local folder (Documents): %s", downloadFolder)
 	logf("Destination local folder (Images/Videos): %s (with year subdirectories)", imageFolder)
+	logf("Destination local folder (Generic files): %s", genericFolder)
 	logf("GCP Project ID: %s", projectID)
 	if impersonateServiceAccount != "" {
 		logf("Impersonating Service Account: %s", impersonateServiceAccount)
@@ -696,7 +825,7 @@ func runPubSubListener() {
 		defer storageClient.Close()
 
 		// Process the GCS object (download and delete)
-		if err := processGCSObject(ctx, storageClient, actualBucketName, objectName, downloadFolder, imageFolder); err != nil {
+		if err := processGCSObject(ctx, storageClient, actualBucketName, objectName, downloadFolder, imageFolder, genericFolder); err != nil {
 			logf("Failed to process object '%s' from bucket '%s': %v", objectName, actualBucketName, err)
 			// You might want to Nack the message here instead of Ack if you want it redelivered
 			// for retry, but acknowledge for now to prevent infinite loops on persistent errors.

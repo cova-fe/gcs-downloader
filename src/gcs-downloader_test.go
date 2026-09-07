@@ -74,6 +74,47 @@ func TestIsImage(t *testing.T) {
 	}
 }
 
+func TestIsDocument(t *testing.T) {
+	tests := []struct {
+		filename    string
+		contentType string
+		expected    bool
+	}{
+		{"document.pdf", "", true},
+		{"presentation.odp", "", true},
+		{"spreadsheet.ods", "", true},
+		{"word.docx", "", true},
+		{"word.doc", "", true},
+		{"notes.odt", "", true},
+		{"slides.pptx", "", true},
+		{"slides.ppt", "", true},
+		{"data.xlsx", "", true},
+		{"data.xls", "", true},
+		{"data.csv", "", true},
+		{"notes.txt", "", true},
+		{"readme.md", "", true},
+		{"book.epub", "", true},
+		{"email.eml", "", true},
+		{"custom.file", "application/pdf", true},
+		{"custom.file", "application/msword", true},
+		{"custom.file", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", true},
+		{"custom.file", "application/vnd.oasis.opendocument.presentation", true},
+		{"custom.file", "text/plain", true},
+		{"photo.jpg", "image/jpeg", false},
+		{"video.mp4", "video/mp4", false},
+		{"archive.zip", "application/zip", false},
+		{"archive.tar.gz", "application/gzip", false},
+		{"disk.iso", "application/x-iso9660-image", false},
+	}
+
+	for _, tt := range tests {
+		result := isDocument(tt.filename, tt.contentType)
+		if result != tt.expected {
+			t.Errorf("isDocument(%q, %q) = %v; expected %v", tt.filename, tt.contentType, result, tt.expected)
+		}
+	}
+}
+
 func TestIsVideo(t *testing.T) {
 	tests := []struct {
 		filename    string
@@ -352,6 +393,7 @@ func TestProcessDownloadedFile(t *testing.T) {
 	tmpBase := t.TempDir()
 	downloadDir := filepath.Join(tmpBase, "downloads")
 	imageDir := filepath.Join(tmpBase, "images")
+	genericDir := filepath.Join(tmpBase, "generic")
 
 	if err := os.MkdirAll(downloadDir, 0755); err != nil {
 		t.Fatalf("failed to create downloadDir: %v", err)
@@ -359,13 +401,16 @@ func TestProcessDownloadedFile(t *testing.T) {
 	if err := os.MkdirAll(imageDir, 0755); err != nil {
 		t.Fatalf("failed to create imageDir: %v", err)
 	}
+	if err := os.MkdirAll(genericDir, 0755); err != nil {
+		t.Fatalf("failed to create genericDir: %v", err)
+	}
 
 	// 1. PDF File -> goes to downloadDir directly
 	pdfTemp := filepath.Join(tmpBase, "temp_doc.tmp")
 	if err := os.WriteFile(pdfTemp, []byte("%PDF-1.4 test content"), 0644); err != nil {
 		t.Fatalf("failed to write temp PDF: %v", err)
 	}
-	destPath, logDetails, err := processDownloadedFile(pdfTemp, "invoice.pdf", "application/pdf", time.Time{}, downloadDir, imageDir)
+	destPath, logDetails, err := processDownloadedFile(pdfTemp, "invoice.pdf", "application/pdf", time.Time{}, downloadDir, imageDir, genericDir)
 	if err != nil {
 		t.Fatalf("processDownloadedFile failed for PDF: %v", err)
 	}
@@ -380,13 +425,33 @@ func TestProcessDownloadedFile(t *testing.T) {
 		t.Errorf("expected logDetails 'PDF', got %q", logDetails)
 	}
 
-	// 2. Image with EXIF -> goes to imageDir/<year>/<filename>
+	// 2. Office / OpenDocument files (ODP, DOCX) -> goes to downloadDir directly
+	odpTemp := filepath.Join(tmpBase, "temp_odp.tmp")
+	if err := os.WriteFile(odpTemp, []byte("presentation content"), 0644); err != nil {
+		t.Fatalf("failed to write temp ODP: %v", err)
+	}
+	destPath, logDetails, err = processDownloadedFile(odpTemp, "slides.odp", "", time.Time{}, downloadDir, imageDir, genericDir)
+	if err != nil {
+		t.Fatalf("processDownloadedFile failed for ODP: %v", err)
+	}
+	expectedODPPath := filepath.Join(downloadDir, "slides.odp")
+	if destPath != expectedODPPath {
+		t.Errorf("ODP destPath = %q; expected %q", destPath, expectedODPPath)
+	}
+	if _, err := os.Stat(expectedODPPath); os.IsNotExist(err) {
+		t.Errorf("ODP not found at expected location %q", expectedODPPath)
+	}
+	if logDetails != "document" {
+		t.Errorf("expected logDetails 'document', got %q", logDetails)
+	}
+
+	// 3. Image with EXIF -> goes to imageDir/<year>/<filename>
 	imgTemp := filepath.Join(tmpBase, "temp_img.tmp")
 	jpegBytes := createMinimalExifJPEG("2019:11:20 14:00:00")
 	if err := os.WriteFile(imgTemp, jpegBytes, 0644); err != nil {
 		t.Fatalf("failed to write temp JPEG: %v", err)
 	}
-	destPath, logDetails, err = processDownloadedFile(imgTemp, "holiday.jpg", "image/jpeg", time.Time{}, downloadDir, imageDir)
+	destPath, logDetails, err = processDownloadedFile(imgTemp, "holiday.jpg", "image/jpeg", time.Time{}, downloadDir, imageDir, genericDir)
 	if err != nil {
 		t.Fatalf("processDownloadedFile failed for Image with EXIF: %v", err)
 	}
@@ -398,12 +463,12 @@ func TestProcessDownloadedFile(t *testing.T) {
 		t.Errorf("Image not found at expected location %q", expectedImgPath)
 	}
 
-	// 3. Image with filename date and empty imageDir -> defaults to downloadDir/<year>/<filename>
+	// 4. Image with filename date and empty imageDir -> defaults to downloadDir/<year>/<filename>
 	img2Temp := filepath.Join(tmpBase, "temp_img2.tmp")
 	if err := os.WriteFile(img2Temp, []byte("fake image data"), 0644); err != nil {
 		t.Fatalf("failed to write temp img2: %v", err)
 	}
-	destPath, _, err = processDownloadedFile(img2Temp, "IMG_20220815_123456.png", "image/png", time.Time{}, downloadDir, "")
+	destPath, _, err = processDownloadedFile(img2Temp, "IMG_20220815_123456.png", "image/png", time.Time{}, downloadDir, "", "")
 	if err != nil {
 		t.Fatalf("processDownloadedFile failed for Image without dedicated imageDir: %v", err)
 	}
@@ -415,12 +480,12 @@ func TestProcessDownloadedFile(t *testing.T) {
 		t.Errorf("Image not found at expected location %q", expectedImg2Path)
 	}
 
-	// 4. Video file -> goes to imageDir/<year>/<filename>
+	// 5. Video file -> goes to imageDir/<year>/<filename>
 	vidTemp := filepath.Join(tmpBase, "temp_vid.tmp")
 	if err := os.WriteFile(vidTemp, []byte("fake video stream data"), 0644); err != nil {
 		t.Fatalf("failed to write temp video: %v", err)
 	}
-	destPath, logDetails, err = processDownloadedFile(vidTemp, "VID_20230704_120000.mp4", "video/mp4", time.Time{}, downloadDir, imageDir)
+	destPath, logDetails, err = processDownloadedFile(vidTemp, "VID_20230704_120000.mp4", "video/mp4", time.Time{}, downloadDir, imageDir, genericDir)
 	if err != nil {
 		t.Fatalf("processDownloadedFile failed for Video: %v", err)
 	}
@@ -435,12 +500,12 @@ func TestProcessDownloadedFile(t *testing.T) {
 		t.Errorf("expected logDetails starting with 'video', got %q", logDetails)
 	}
 
-	// 5. Undated image (no EXIF, no date in filename) -> goes to imageDir/NO_DATE/<filename>
+	// 6. Undated image (no EXIF, no date in filename) -> goes to imageDir/NO_DATE/<filename>
 	undatedTemp := filepath.Join(tmpBase, "temp_undated.tmp")
 	if err := os.WriteFile(undatedTemp, []byte("undated image content"), 0644); err != nil {
 		t.Fatalf("failed to write undated image: %v", err)
 	}
-	destPath, logDetails, err = processDownloadedFile(undatedTemp, "random_photo.jpg", "image/jpeg", time.Time{}, downloadDir, imageDir)
+	destPath, logDetails, err = processDownloadedFile(undatedTemp, "random_photo.jpg", "image/jpeg", time.Time{}, downloadDir, imageDir, genericDir)
 	if err != nil {
 		t.Fatalf("processDownloadedFile failed for undated image: %v", err)
 	}
@@ -455,24 +520,41 @@ func TestProcessDownloadedFile(t *testing.T) {
 		t.Errorf("expected logDetails containing 'no date detected', got %q", logDetails)
 	}
 
-	// 6. Non-image, non-video, non-PDF file -> goes to downloadDir directly
-	txtTemp := filepath.Join(tmpBase, "temp_txt.tmp")
-	if err := os.WriteFile(txtTemp, []byte("just a text file"), 0644); err != nil {
-		t.Fatalf("failed to write temp txt: %v", err)
+	// 7. Generic file (e.g. zip archive) -> goes to genericDir directly
+	zipTemp := filepath.Join(tmpBase, "temp_zip.tmp")
+	if err := os.WriteFile(zipTemp, []byte{0x50, 0x4B, 0x03, 0x04, 0x00, 0x00}, 0644); err != nil {
+		t.Fatalf("failed to write temp zip: %v", err)
 	}
-	destPath, logDetails, err = processDownloadedFile(txtTemp, "notes.txt", "text/plain", time.Time{}, downloadDir, imageDir)
+	destPath, logDetails, err = processDownloadedFile(zipTemp, "backup.zip", "application/zip", time.Time{}, downloadDir, imageDir, genericDir)
 	if err != nil {
-		t.Fatalf("processDownloadedFile failed for text file: %v", err)
+		t.Fatalf("processDownloadedFile failed for generic file: %v", err)
 	}
-	expectedTxtPath := filepath.Join(downloadDir, "notes.txt")
-	if destPath != expectedTxtPath {
-		t.Errorf("text file destPath = %q; expected %q", destPath, expectedTxtPath)
+	expectedZipPath := filepath.Join(genericDir, "backup.zip")
+	if destPath != expectedZipPath {
+		t.Errorf("generic file destPath = %q; expected %q", destPath, expectedZipPath)
 	}
-	if _, err := os.Stat(expectedTxtPath); os.IsNotExist(err) {
-		t.Errorf("Text file not found at expected location %q", expectedTxtPath)
+	if _, err := os.Stat(expectedZipPath); os.IsNotExist(err) {
+		t.Errorf("Generic file not found at expected location %q", expectedZipPath)
 	}
-	if logDetails != "file" {
-		t.Errorf("expected logDetails 'file', got %q", logDetails)
+	if logDetails != "generic file" {
+		t.Errorf("expected logDetails 'generic file', got %q", logDetails)
+	}
+
+	// 8. Generic file with empty genericDir -> falls back to downloadDir
+	isoTemp := filepath.Join(tmpBase, "temp_iso.tmp")
+	if err := os.WriteFile(isoTemp, []byte{0x00, 0x01, 0x02, 0x03, 0x04}, 0644); err != nil {
+		t.Fatalf("failed to write temp iso: %v", err)
+	}
+	destPath, logDetails, err = processDownloadedFile(isoTemp, "os.iso", "", time.Time{}, downloadDir, imageDir, "")
+	if err != nil {
+		t.Fatalf("processDownloadedFile failed for generic file with empty genericDir: %v", err)
+	}
+	expectedIsoPath := filepath.Join(downloadDir, "os.iso")
+	if destPath != expectedIsoPath {
+		t.Errorf("generic file destPath = %q; expected %q", destPath, expectedIsoPath)
+	}
+	if _, err := os.Stat(expectedIsoPath); os.IsNotExist(err) {
+		t.Errorf("Generic file not found at expected location %q", expectedIsoPath)
 	}
 }
 
