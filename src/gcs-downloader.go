@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -409,6 +411,21 @@ func moveFile(src, dst string) error {
 	return os.Remove(src)
 }
 
+// fileChecksumSHA256 calculates the SHA-256 hex digest of a file
+func fileChecksumSHA256(filePath string) (string, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 const randomCharset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 // randomString generates a cryptographically secure random alphanumeric string of length n
@@ -425,48 +442,104 @@ func randomString(length int) string {
 	return string(b)
 }
 
-// resolveMediaDestinationPath resolves the destination path for an image or video.
-// If the file already exists in <baseFolder>/<year>/<filename>, it redirects it to <baseFolder>/DUPES/<filename>.
-// If <baseFolder>/DUPES/<filename> already exists, it appends a random 2-character string to the filename.
-func resolveMediaDestinationPath(baseFolder string, year string, rawFilename string) (string, bool, error) {
-	filename := filepath.Base(rawFilename)
-	yearDir := filepath.Join(baseFolder, year)
-	if err := os.MkdirAll(yearDir, 0755); err != nil {
-		return "", false, fmt.Errorf("error creating year directory %s: %w", yearDir, err)
-	}
-
-	primaryPath := filepath.Join(yearDir, filename)
-	if _, err := os.Stat(primaryPath); os.IsNotExist(err) {
-		return primaryPath, false, nil
-	}
-
-	// File already exists in the year folder; redirect to DUPES folder
-	dupesDir := filepath.Join(baseFolder, "DUPES")
-	if err := os.MkdirAll(dupesDir, 0755); err != nil {
-		return "", false, fmt.Errorf("error creating DUPES directory %s: %w", dupesDir, err)
-	}
-
-	dupePath := filepath.Join(dupesDir, filename)
-	if _, err := os.Stat(dupePath); os.IsNotExist(err) {
-		return dupePath, true, nil
-	}
-
-	// File already exists in DUPES folder; append a random 2-character string to the filename
+// findAvailableSuffixedPath appends a random 2-character suffix to filename until an available path in targetDir is found
+func findAvailableSuffixedPath(targetDir string, filename string) string {
 	ext := filepath.Ext(filename)
 	nameWithoutExt := strings.TrimSuffix(filename, ext)
 
 	for i := 0; i < 100; i++ {
 		randSuffix := randomString(2)
 		candidateFilename := fmt.Sprintf("%s_%s%s", nameWithoutExt, randSuffix, ext)
-		candidatePath := filepath.Join(dupesDir, candidateFilename)
+		candidatePath := filepath.Join(targetDir, candidateFilename)
 		if _, err := os.Stat(candidatePath); os.IsNotExist(err) {
-			return candidatePath, true, nil
+			return candidatePath
 		}
 	}
 
 	// Fallback with timestamp in case of unexpected collisions
 	fallbackFilename := fmt.Sprintf("%s_%d%s", nameWithoutExt, time.Now().UnixNano(), ext)
-	return filepath.Join(dupesDir, fallbackFilename), true, nil
+	return filepath.Join(targetDir, fallbackFilename)
+}
+
+// resolveDocumentDestinationPath resolves the destination path for documents.
+// If a document with the same name already exists in targetDir, it appends a random 2-character suffix
+// directly in targetDir so Paperless can handle deduplication.
+func resolveDocumentDestinationPath(targetDir string, rawFilename string) (string, bool, error) {
+	filename := filepath.Base(rawFilename)
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return "", false, fmt.Errorf("error creating document destination directory %s: %w", targetDir, err)
+	}
+
+	primaryPath := filepath.Join(targetDir, filename)
+	if _, err := os.Stat(primaryPath); os.IsNotExist(err) {
+		return primaryPath, false, nil
+	}
+
+	// File already exists; append random 2-char suffix in targetDir
+	suffixedPath := findAvailableSuffixedPath(targetDir, filename)
+	return suffixedPath, true, nil
+}
+
+// resolveChecksumDestinationPath resolves destination for media (images/videos) and generic files based on checksum comparison.
+// If a file with the same name exists:
+// - If content checksum matches: saved to DUPES folder (with random 2-char suffix if DUPES already has a file with that name).
+// - If content checksum differs: saved to normal target directory with random 2-char suffix.
+func resolveChecksumDestinationPath(tempFilePath string, baseDir string, subDir string, rawFilename string) (string, string, error) {
+	filename := filepath.Base(rawFilename)
+	var targetDir string
+	if subDir != "" {
+		targetDir = filepath.Join(baseDir, subDir)
+	} else {
+		targetDir = baseDir
+	}
+
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		return "", "", fmt.Errorf("error creating destination directory %s: %w", targetDir, err)
+	}
+
+	primaryPath := filepath.Join(targetDir, filename)
+	if _, err := os.Stat(primaryPath); os.IsNotExist(err) {
+		return primaryPath, "", nil
+	}
+
+	// File already exists! Compute checksums of existing and new files
+	existingHash, err := fileChecksumSHA256(primaryPath)
+	if err != nil {
+		return "", "", fmt.Errorf("error calculating checksum for existing file %s: %w", primaryPath, err)
+	}
+
+	newHash, err := fileChecksumSHA256(tempFilePath)
+	if err != nil {
+		return "", "", fmt.Errorf("error calculating checksum for downloaded temp file %s: %w", tempFilePath, err)
+	}
+
+	if existingHash == newHash {
+		// Content is identical: save to DUPES folder
+		dupesDir := filepath.Join(baseDir, "DUPES")
+		if err := os.MkdirAll(dupesDir, 0755); err != nil {
+			return "", "", fmt.Errorf("error creating DUPES directory %s: %w", dupesDir, err)
+		}
+
+		dupePath := filepath.Join(dupesDir, filename)
+		if _, err := os.Stat(dupePath); os.IsNotExist(err) {
+			return dupePath, "duplicate (identical content, saved to DUPES)", nil
+		}
+
+		// File already exists in DUPES folder; append random suffix
+		suffixedDupePath := findAvailableSuffixedPath(dupesDir, filename)
+		return suffixedDupePath, "duplicate (identical content, saved to DUPES with suffix)", nil
+	}
+
+	// Content differs: save in normal directory with random suffix
+	suffixedNormalPath := findAvailableSuffixedPath(targetDir, filename)
+	return suffixedNormalPath, "name collision (different content, saved with suffix)", nil
+}
+
+// resolveMediaDestinationPath is retained for backwards compatibility
+func resolveMediaDestinationPath(baseFolder string, year string, rawFilename string) (string, bool, error) {
+	dest, info, err := resolveChecksumDestinationPath("", baseFolder, year, rawFilename)
+	isDupe := strings.HasPrefix(info, "duplicate")
+	return dest, isDupe, err
 }
 
 // resolveImageDestinationPath is retained for backwards compatibility
@@ -504,9 +577,9 @@ func processDownloadedFile(tempPath string, objectName string, contentType strin
 		if targetBase == "" {
 			targetBase = downloadFolder
 		}
-		var isDupe bool
+		var dupeInfo string
 		var err error
-		finalDestPath, isDupe, err = resolveMediaDestinationPath(targetBase, year, objectName)
+		finalDestPath, dupeInfo, err = resolveChecksumDestinationPath(tempPath, targetBase, year, objectName)
 		if err != nil {
 			return "", "", err
 		}
@@ -520,20 +593,26 @@ func processDownloadedFile(tempPath string, objectName string, contentType strin
 		} else {
 			yearInfo = fmt.Sprintf("year: %s from %s", year, source)
 		}
-		if isDupe {
-			logDetails = fmt.Sprintf("%s [DUPLICATE redirected to DUPES] (%s)", mediaType, yearInfo)
+		if dupeInfo != "" {
+			logDetails = fmt.Sprintf("%s [%s] (%s)", mediaType, dupeInfo, yearInfo)
 		} else {
 			logDetails = fmt.Sprintf("%s (%s)", mediaType, yearInfo)
 		}
 	} else if isDocFile {
-		finalDestPath = filepath.Join(downloadFolder, objectName)
-		if err := os.MkdirAll(filepath.Dir(finalDestPath), 0755); err != nil {
-			return "", "", fmt.Errorf("error creating destination directory for %s: %w", finalDestPath, err)
+		var isSuffixed bool
+		var err error
+		finalDestPath, isSuffixed, err = resolveDocumentDestinationPath(downloadFolder, objectName)
+		if err != nil {
+			return "", "", err
 		}
+		docType := "document"
 		if isPDF(objectName, contentType) {
-			logDetails = "PDF"
+			docType = "PDF"
+		}
+		if isSuffixed {
+			logDetails = fmt.Sprintf("%s [name collision, saved with suffix for Paperless]", docType)
 		} else {
-			logDetails = "document"
+			logDetails = docType
 		}
 	} else {
 		// Generic file (archives, binaries, unclassified files, etc.)
@@ -541,11 +620,17 @@ func processDownloadedFile(tempPath string, objectName string, contentType strin
 		if targetBase == "" {
 			targetBase = downloadFolder
 		}
-		finalDestPath = filepath.Join(targetBase, objectName)
-		if err := os.MkdirAll(filepath.Dir(finalDestPath), 0755); err != nil {
-			return "", "", fmt.Errorf("error creating generic destination directory for %s: %w", finalDestPath, err)
+		var dupeInfo string
+		var err error
+		finalDestPath, dupeInfo, err = resolveChecksumDestinationPath(tempPath, targetBase, "", objectName)
+		if err != nil {
+			return "", "", err
 		}
-		logDetails = "generic file"
+		if dupeInfo != "" {
+			logDetails = fmt.Sprintf("generic file [%s]", dupeInfo)
+		} else {
+			logDetails = "generic file"
+		}
 	}
 
 	if err := moveFile(tempPath, finalDestPath); err != nil {

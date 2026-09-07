@@ -556,96 +556,182 @@ func TestProcessDownloadedFile(t *testing.T) {
 	if _, err := os.Stat(expectedIsoPath); os.IsNotExist(err) {
 		t.Errorf("Generic file not found at expected location %q", expectedIsoPath)
 	}
+
+	// 9. Document Duplicate: should save with suffix in downloadDir directly (NOT in DUPES)
+	pdfTemp2 := filepath.Join(tmpBase, "temp_doc2.tmp")
+	if err := os.WriteFile(pdfTemp2, []byte("%PDF-1.4 second document"), 0644); err != nil {
+		t.Fatalf("failed to write temp PDF 2: %v", err)
+	}
+	destPath, logDetails, err = processDownloadedFile(pdfTemp2, "invoice.pdf", "application/pdf", time.Time{}, downloadDir, imageDir, genericDir)
+	if err != nil {
+		t.Fatalf("processDownloadedFile failed for document duplicate: %v", err)
+	}
+	if filepath.Dir(destPath) != downloadDir {
+		t.Errorf("expected document duplicate to remain in downloadDir %q, got %q", downloadDir, filepath.Dir(destPath))
+	}
+	if destPath == expectedPDFPath {
+		t.Errorf("expected document duplicate to have a different suffixed name")
+	}
+	if !strings.Contains(logDetails, "name collision") {
+		t.Errorf("expected logDetails containing 'name collision', got %q", logDetails)
+	}
 }
 
-func TestResolveImageDestinationPath(t *testing.T) {
+func TestFileChecksumSHA256(t *testing.T) {
+	tmpDir := t.TempDir()
+	f1 := filepath.Join(tmpDir, "file1.bin")
+	f2 := filepath.Join(tmpDir, "file2.bin")
+	f3 := filepath.Join(tmpDir, "file3.bin")
+
+	if err := os.WriteFile(f1, []byte("identical content"), 0644); err != nil {
+		t.Fatalf("failed to write f1: %v", err)
+	}
+	if err := os.WriteFile(f2, []byte("identical content"), 0644); err != nil {
+		t.Fatalf("failed to write f2: %v", err)
+	}
+	if err := os.WriteFile(f3, []byte("different content"), 0644); err != nil {
+		t.Fatalf("failed to write f3: %v", err)
+	}
+
+	h1, err := fileChecksumSHA256(f1)
+	if err != nil {
+		t.Fatalf("fileChecksumSHA256 failed: %v", err)
+	}
+	h2, err := fileChecksumSHA256(f2)
+	if err != nil {
+		t.Fatalf("fileChecksumSHA256 failed: %v", err)
+	}
+	h3, err := fileChecksumSHA256(f3)
+	if err != nil {
+		t.Fatalf("fileChecksumSHA256 failed: %v", err)
+	}
+
+	if h1 != h2 {
+		t.Errorf("expected identical hashes for same content, got %q and %q", h1, h2)
+	}
+	if h1 == h3 {
+		t.Errorf("expected different hashes for different content, got %q", h1)
+	}
+}
+
+func TestResolveDocumentDestinationPath(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// 1. First document: saved directly as <tmpDir>/invoice.pdf
+	p1, isSuffixed, err := resolveDocumentDestinationPath(tmpDir, "invoice.pdf")
+	if err != nil {
+		t.Fatalf("resolveDocumentDestinationPath failed: %v", err)
+	}
+	if isSuffixed {
+		t.Errorf("expected isSuffixed=false for first document")
+	}
+	expectedP1 := filepath.Join(tmpDir, "invoice.pdf")
+	if p1 != expectedP1 {
+		t.Errorf("expected %q, got %q", expectedP1, p1)
+	}
+
+	// Create p1
+	if err := os.WriteFile(p1, []byte("invoice 1"), 0644); err != nil {
+		t.Fatalf("failed to write p1: %v", err)
+	}
+
+	// 2. Second document with same name: saved with suffix directly in tmpDir (e.g. invoice_xx.pdf)
+	p2, isSuffixed, err := resolveDocumentDestinationPath(tmpDir, "invoice.pdf")
+	if err != nil {
+		t.Fatalf("resolveDocumentDestinationPath failed: %v", err)
+	}
+	if !isSuffixed {
+		t.Errorf("expected isSuffixed=true for second document")
+	}
+	if filepath.Dir(p2) != tmpDir {
+		t.Errorf("expected p2 in tmpDir, got %q", filepath.Dir(p2))
+	}
+	if p2 == p1 {
+		t.Errorf("expected p2 to differ from p1")
+	}
+	if filepath.Ext(p2) != ".pdf" {
+		t.Errorf("expected extension .pdf, got %q", filepath.Ext(p2))
+	}
+}
+
+func TestResolveChecksumDestinationPath(t *testing.T) {
 	tmpDir := t.TempDir()
 	year := "2026"
 
-	// 1. First file: should go to <tmpDir>/2026/photo.jpg
-	p1, isDupe, err := resolveImageDestinationPath(tmpDir, year, "photo.jpg")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	// Create incoming temp files with content A and content B
+	tempA := filepath.Join(tmpDir, "tempA.jpg")
+	tempB := filepath.Join(tmpDir, "tempB.jpg")
+	if err := os.WriteFile(tempA, []byte("image content AAA"), 0644); err != nil {
+		t.Fatalf("failed to write tempA: %v", err)
 	}
-	if isDupe {
-		t.Errorf("expected isDupe=false for first file")
+	if err := os.WriteFile(tempB, []byte("image content BBB"), 0644); err != nil {
+		t.Fatalf("failed to write tempB: %v", err)
+	}
+
+	// 1. First file: should go to <tmpDir>/2026/photo.jpg
+	p1, dupeInfo, err := resolveChecksumDestinationPath(tempA, tmpDir, year, "photo.jpg")
+	if err != nil {
+		t.Fatalf("resolveChecksumDestinationPath failed: %v", err)
+	}
+	if dupeInfo != "" {
+		t.Errorf("expected empty dupeInfo for first file, got %q", dupeInfo)
 	}
 	expectedP1 := filepath.Join(tmpDir, "2026", "photo.jpg")
 	if p1 != expectedP1 {
 		t.Errorf("expected %q, got %q", expectedP1, p1)
 	}
 
-	// Create the file at p1 so it exists
-	if err := os.WriteFile(p1, []byte("image 1"), 0644); err != nil {
+	// Save file at p1 with content A
+	if err := os.WriteFile(p1, []byte("image content AAA"), 0644); err != nil {
 		t.Fatalf("failed to write p1: %v", err)
 	}
 
-	// 2. Second file with same name: should go to <tmpDir>/DUPES/photo.jpg
-	p2, isDupe, err := resolveImageDestinationPath(tmpDir, year, "photo.jpg")
+	// 2. Second file: SAME content (content A) -> should go to <tmpDir>/DUPES/photo.jpg
+	p2, dupeInfo, err := resolveChecksumDestinationPath(tempA, tmpDir, year, "photo.jpg")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("resolveChecksumDestinationPath failed: %v", err)
 	}
-	if !isDupe {
-		t.Errorf("expected isDupe=true for second duplicate file")
+	if !strings.HasPrefix(dupeInfo, "duplicate") {
+		t.Errorf("expected duplicate dupeInfo, got %q", dupeInfo)
 	}
 	expectedP2 := filepath.Join(tmpDir, "DUPES", "photo.jpg")
 	if p2 != expectedP2 {
 		t.Errorf("expected %q, got %q", expectedP2, p2)
 	}
 
-	// Create the file at p2 so it exists in DUPES
-	if err := os.WriteFile(p2, []byte("image 2 (dupe 1)"), 0644); err != nil {
+	// Save file at p2 in DUPES
+	if err := os.WriteFile(p2, []byte("image content AAA"), 0644); err != nil {
 		t.Fatalf("failed to write p2: %v", err)
 	}
 
-	// 3. Third file with same name: should go to <tmpDir>/DUPES/photo_<random2chars>.jpg
-	p3, isDupe, err := resolveImageDestinationPath(tmpDir, year, "photo.jpg")
+	// 3. Third file: SAME content (content A) again -> should go to <tmpDir>/DUPES/photo_xx.jpg
+	p3, dupeInfo, err := resolveChecksumDestinationPath(tempA, tmpDir, year, "photo.jpg")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("resolveChecksumDestinationPath failed: %v", err)
 	}
-	if !isDupe {
-		t.Errorf("expected isDupe=true for third duplicate file")
+	if !strings.HasPrefix(dupeInfo, "duplicate") {
+		t.Errorf("expected duplicate dupeInfo, got %q", dupeInfo)
 	}
 	if filepath.Dir(p3) != filepath.Join(tmpDir, "DUPES") {
-		t.Errorf("expected dir to be DUPES, got %q", filepath.Dir(p3))
+		t.Errorf("expected p3 in DUPES, got %q", filepath.Dir(p3))
 	}
 	if p3 == p2 {
 		t.Errorf("expected p3 to differ from p2, got %q", p3)
 	}
-	// Filename should match photo_??.jpg
-	baseName := filepath.Base(p3)
-	if len(baseName) != len("photo_XX.jpg") || filepath.Ext(baseName) != ".jpg" {
-		t.Errorf("expected format photo_XX.jpg, got %q", baseName)
-	}
 
-	// Create the file at p3 so it exists
-	if err := os.WriteFile(p3, []byte("image 3 (dupe 2)"), 0644); err != nil {
-		t.Fatalf("failed to write p3: %v", err)
-	}
-
-	// 4. Fourth file with same name: should also get a unique random name in DUPES
-	p4, isDupe, err := resolveImageDestinationPath(tmpDir, year, "photo.jpg")
+	// 4. Fourth file: DIFFERENT content (content B) with SAME name -> should go to <tmpDir>/2026/photo_xx.jpg (NORMAL folder!)
+	p4, dupeInfo, err := resolveChecksumDestinationPath(tempB, tmpDir, year, "photo.jpg")
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("resolveChecksumDestinationPath failed: %v", err)
 	}
-	if !isDupe {
-		t.Errorf("expected isDupe=true for fourth duplicate file")
+	if !strings.HasPrefix(dupeInfo, "name collision") {
+		t.Errorf("expected name collision dupeInfo, got %q", dupeInfo)
 	}
-	if p4 == p3 || p4 == p2 {
-		t.Errorf("expected p4 to be distinct from p2 and p3, got %q", p4)
+	if filepath.Dir(p4) != filepath.Join(tmpDir, "2026") {
+		t.Errorf("expected p4 in normal year folder <tmpDir>/2026, got %q", filepath.Dir(p4))
 	}
-
-	// 5. NO_DATE folder routing
-	pNoDate, isDupe, err := resolveImageDestinationPath(tmpDir, "NO_DATE", "undated.png")
-	if err != nil {
-		t.Fatalf("unexpected error for NO_DATE: %v", err)
-	}
-	if isDupe {
-		t.Errorf("expected isDupe=false for first undated file")
-	}
-	expectedNoDate := filepath.Join(tmpDir, "NO_DATE", "undated.png")
-	if pNoDate != expectedNoDate {
-		t.Errorf("expected %q, got %q", expectedNoDate, pNoDate)
+	if p4 == p1 {
+		t.Errorf("expected p4 to differ from p1")
 	}
 }
 

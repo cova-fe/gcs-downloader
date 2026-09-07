@@ -122,11 +122,18 @@ Downloaded files are automatically routed to one of three destination folders:
    - Any other unclassified files (e.g., `.zip`, `.tar.gz`, `.iso`, binaries, installer packages).
    - Saved directly into `--generic-dest/<filename>`. If `--generic-dest` is omitted, defaults to `--dest`.
 
-### Duplicate Media Handling
+### Duplicate Handling Strategies
 
-If an image or video arrives with a filename that already exists in the destination `<image-dest>/<year>/` or `<image-dest>/NO_DATE/` folder:
-1. The duplicate file is automatically diverted to a `DUPES` folder at the root of the media directory (`<image-dest>/DUPES/<filename>`).
-2. If a file with that name is already present in the `DUPES` folder, a random 2-character suffix is appended to the filename before the extension (e.g. `photo_a1.jpg` or `video_k9.mp4`) to prevent overwriting.
+The application uses two specialized strategies for duplicate filenames:
+
+1. **Documents (`--dest`)**:
+   - When a document with an identical filename is downloaded, a random 2-character suffix is appended to the filename (e.g., `invoice_a1.pdf`) and saved directly into the destination folder.
+   - This leaves deduplication to downstream applications (such as Paperless-ngx) to process and merge automatically.
+
+2. **Images, Videos (`--image-dest`) and Generic Files (`--generic-dest`)**:
+   - When a file with an identical filename already exists in the destination folder, the application computes and compares the SHA-256 checksums of the existing file and the newly downloaded file:
+     - **Identical Content (True Duplicate)**: The new file is diverted to the `DUPES/` folder (`<image-dest>/DUPES/<filename>` or `<generic-dest>/DUPES/<filename>`). If a file with that name already exists in `DUPES/`, a random 2-character suffix is appended (`photo_a1.jpg`).
+     - **Different Content (Name Collision)**: The new file is saved in the **normal destination folder** with a random 2-character suffix (e.g., `<image-dest>/2026/photo_x4.jpg`), ensuring different photos or files sharing common names are not mistakenly marked as duplicates.
 
 ### Contributing
 Contributions are welcome! If you find a bug or have a feature request, please open an issue or submit a pull request.
